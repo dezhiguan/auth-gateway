@@ -48,6 +48,10 @@ public class JwksProvider {
         return publicJwkSet.toString();
     }
 
+    public JWKSet publicJwkSet() {
+        return publicJwkSet;
+    }
+
     private RSAKey loadOptionalRsaKey(String kid, String pemPath) {
         if (!StringUtils.hasText(kid) || !StringUtils.hasText(pemPath)) {
             return null;

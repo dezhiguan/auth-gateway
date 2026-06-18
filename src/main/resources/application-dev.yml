@@ -2,3 +2,7 @@ spring:
   config:
     activate:
       on-profile: dev
+
+auth:
+  dev:
+    allow-local-jwks-client-assertions: true

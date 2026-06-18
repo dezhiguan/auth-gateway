@@ -6,8 +6,15 @@ spring:
     name: auth-gateway
   profiles:
     active: dev
+  datasource:
+    url: ${AUTH_DB_URL:jdbc:postgresql://localhost:5433/authdb}
+    username: ${AUTH_DB_USERNAME:auth}
+    password: ${AUTH_DB_PASSWORD:auth_dev_password}
 
 management:
+  health:
+    redis:
+      enabled: false
   endpoints:
     web:
       exposure:
@@ -25,6 +32,10 @@ jwks:
     previous-private-key: config/keys/auth-previous.pem
 
 auth:
+  issuer: ${AUTH_ISSUER:https://auth.careermate.cn}
+  token-endpoint-audience: ${AUTH_TOKEN_ENDPOINT_AUDIENCE:https://auth.careermate.cn/oauth/token}
+  access-token-ttl-seconds: 900
+  refresh-token-ttl-seconds: 604800
   sms:
     storage: memory
     phone-hash-pepper: ${AUTH_SMS_PHONE_HASH_PEPPER:auth-gateway-dev-pepper}

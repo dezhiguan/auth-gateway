@@ -21,13 +21,16 @@ public class JwtSigner {
     public String sign(Map<String, Object> claims) {
         JWTClaimsSet.Builder claimsBuilder = new JWTClaimsSet.Builder();
         claims.forEach(claimsBuilder::claim);
+        return sign(claimsBuilder.build());
+    }
 
+    public String sign(JWTClaimsSet claims) {
         SignedJWT jwt = new SignedJWT(
                 new JWSHeader.Builder(JWSAlgorithm.RS256)
                         .keyID(jwksProvider.activeKey().getKeyID())
                         .type(com.nimbusds.jose.JOSEObjectType.JWT)
                         .build(),
-                claimsBuilder.build());
+                claims);
         try {
             jwt.sign(new RSASSASigner(jwksProvider.activeKey()));
             return jwt.serialize();
