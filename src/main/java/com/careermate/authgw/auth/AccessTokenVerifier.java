@@ -25,6 +25,10 @@ public class AccessTokenVerifier {
             throw new AuthException(401, "ACCESS_TOKEN_REQUIRED", "Bearer access token is required");
         }
         String token = authorizationHeader.substring("Bearer ".length()).trim();
+        return verifyToken(token);
+    }
+
+    public JWTClaimsSet verifyToken(String token) {
         try {
             ConfigurableJWTProcessor<SecurityContext> processor = new DefaultJWTProcessor<>();
             JWSKeySelector<SecurityContext> selector = new JWSVerificationKeySelector<>(
