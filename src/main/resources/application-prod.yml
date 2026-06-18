@@ -2,3 +2,10 @@ spring:
   config:
     activate:
       on-profile: prod
+
+jwks:
+  active-kid: ${JWKS_ACTIVE_KID}
+  previous-kid: ${JWKS_PREVIOUS_KID:}
+  key-store:
+    active-private-key: ${JWKS_ACTIVE_PRIVATE_KEY_PATH}
+    previous-private-key: ${JWKS_PREVIOUS_PRIVATE_KEY_PATH:}
