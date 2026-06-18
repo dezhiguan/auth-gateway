@@ -23,3 +23,10 @@ jwks:
   key-store:
     active-private-key: config/keys/auth-active.pem
     previous-private-key: config/keys/auth-previous.pem
+
+auth:
+  sms:
+    storage: memory
+    phone-hash-pepper: ${AUTH_SMS_PHONE_HASH_PEPPER:auth-gateway-dev-pepper}
+    code-ttl-seconds: 300
+    mock-code: "123456"
