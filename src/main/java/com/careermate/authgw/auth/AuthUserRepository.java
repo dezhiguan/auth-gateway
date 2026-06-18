@@ -52,6 +52,15 @@ public class AuthUserRepository {
         return users.stream().findFirst();
     }
 
+    public void updatePasswordAndIncrementSessionVersion(long id, String passwordHash) {
+        jdbcTemplate.update("""
+                        UPDATE auth_users
+                        SET password_hash = ?, session_version = session_version + 1
+                        WHERE id = ?
+                        """,
+                passwordHash, id);
+    }
+
     private AuthUser mapUser(ResultSet rs) throws SQLException {
         return new AuthUser(
                 rs.getLong("id"),
