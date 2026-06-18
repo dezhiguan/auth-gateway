@@ -40,6 +40,18 @@ public class AuthUserRepository {
         return users.stream().findFirst();
     }
 
+    public Optional<AuthUser> findById(long id) {
+        List<AuthUser> users = jdbcTemplate.query("""
+                        SELECT id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status
+                        FROM auth_users
+                        WHERE id = ?
+                        LIMIT 1
+                        """,
+                (rs, rowNum) -> mapUser(rs),
+                id);
+        return users.stream().findFirst();
+    }
+
     private AuthUser mapUser(ResultSet rs) throws SQLException {
         return new AuthUser(
                 rs.getLong("id"),

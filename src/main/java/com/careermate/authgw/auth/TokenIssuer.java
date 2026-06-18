@@ -2,12 +2,8 @@ package com.careermate.authgw.auth;
 
 import com.careermate.authgw.crypto.JwtSigner;
 import com.nimbusds.jwt.JWTClaimsSet;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.Date;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -19,11 +15,13 @@ public class TokenIssuer {
     private final JwtSigner jwtSigner;
     private final JdbcTemplate jdbcTemplate;
     private final AuthProperties properties;
+    private final TokenHasher tokenHasher;
 
-    public TokenIssuer(JwtSigner jwtSigner, JdbcTemplate jdbcTemplate, AuthProperties properties) {
+    public TokenIssuer(JwtSigner jwtSigner, JdbcTemplate jdbcTemplate, AuthProperties properties, TokenHasher tokenHasher) {
         this.jwtSigner = jwtSigner;
         this.jdbcTemplate = jdbcTemplate;
         this.properties = properties;
+        this.tokenHasher = tokenHasher;
     }
 
     public TokenPair issueUserTokens(AuthUser user, OAuthClient client, String targetAud) {
@@ -43,12 +41,8 @@ public class TokenIssuer {
                         INSERT INTO auth_sessions(session_id, user_id, device_id, session_version, created_at)
                         VALUES (?, ?, ?, ?, now())
                         """,
-                sessionId, user.id(), client.clientId(), user.sessionVersion());
-        jdbcTemplate.update("""
-                        INSERT INTO refresh_tokens(token_hash, family_id, session_id, expires_at)
-                        VALUES (?, ?, ?, ?)
-                        """,
-                sha256Hex(refreshToken), familyId, sessionId, Date.from(refreshExpiresAt));
+                sessionId, user.id(), targetAud, user.sessionVersion());
+        storeRefreshToken(refreshToken, familyId, sessionId, refreshExpiresAt);
 
         JWTClaimsSet claims = new JWTClaimsSet.Builder()
                 .issuer(properties.getIssuer())
@@ -72,6 +66,48 @@ public class TokenIssuer {
         return new TokenPair(jwtSigner.sign(claims), refreshToken, "Bearer", properties.getAccessTokenTtlSeconds());
     }
 
+    public TokenPair issueRotatedRefresh(AuthUser user, OAuthClient client, String targetAud, String sessionId, String familyId) {
+        if (!client.allowedAudiences().contains(targetAud)) {
+            throw new AuthException(403, "AUDIENCE_NOT_ALLOWED", "client is not allowed to request target_aud");
+        }
+
+        Instant now = Instant.now();
+        Instant accessExpiresAt = now.plusSeconds(properties.getAccessTokenTtlSeconds());
+        Instant refreshExpiresAt = now.plusSeconds(properties.getRefreshTokenTtlSeconds());
+        String jti = "jti_" + UUID.randomUUID();
+        String refreshToken = "rt_" + UUID.randomUUID() + "." + UUID.randomUUID();
+        storeRefreshToken(refreshToken, familyId, sessionId, refreshExpiresAt);
+
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                .issuer(properties.getIssuer())
+                .audience(targetAud)
+                .subject("user:" + user.id())
+                .issueTime(Date.from(now))
+                .expirationTime(Date.from(accessExpiresAt))
+                .jwtID(jti)
+                .claim("principal_type", "user")
+                .claim("user_id", user.id())
+                .claim("tenant_id", "tn_01J_PERSONAL")
+                .claim("platform_role", user.platformRole())
+                .claim("rag_role", deriveRagRole(user))
+                .claim("rag_readable_kb_ids", List.of())
+                .claim("rag_writable_kb_ids", List.of())
+                .claim("scopes", scopesFor(user, targetAud))
+                .claim("session_id", sessionId)
+                .claim("session_version", user.sessionVersion())
+                .build();
+
+        return new TokenPair(jwtSigner.sign(claims), refreshToken, "Bearer", properties.getAccessTokenTtlSeconds());
+    }
+
+    private void storeRefreshToken(String refreshToken, String familyId, String sessionId, Instant refreshExpiresAt) {
+        jdbcTemplate.update("""
+                        INSERT INTO refresh_tokens(token_hash, family_id, session_id, expires_at)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                tokenHasher.sha256Hex(refreshToken), familyId, sessionId, Date.from(refreshExpiresAt));
+    }
+
     private String deriveRagRole(AuthUser user) {
         if ("ADMIN".equalsIgnoreCase(user.platformRole())) {
             return "ADMIN";
@@ -89,12 +125,4 @@ public class TokenIssuer {
         return List.of();
     }
 
-    private String sha256Hex(String input) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(input.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException ex) {
-            throw new IllegalStateException("SHA-256 not available", ex);
-        }
-    }
 }
