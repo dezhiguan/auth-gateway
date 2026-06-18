@@ -39,6 +39,19 @@ public class AuthLoginController {
         return new LoginResponse(tokens.accessToken(), tokens.refreshToken(), tokens.tokenType(), tokens.expiresIn());
     }
 
+    @PostMapping(value = "/auth/login/mobile", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+    public LoginResponse loginMobile(
+            @RequestParam String phone,
+            @RequestParam String code,
+            @RequestParam("target_aud") String targetAud,
+            @RequestParam(name = "client_id", required = false) String clientId,
+            @RequestParam(name = "client_assertion_type", required = false) String clientAssertionType,
+            @RequestParam(name = "client_assertion", required = false) String clientAssertion) {
+        OAuthClient client = clientAuthenticator.authenticate(clientId, clientAssertionType, clientAssertion);
+        TokenPair tokens = loginService.loginMobile(phone, code, targetAud, client);
+        return new LoginResponse(tokens.accessToken(), tokens.refreshToken(), tokens.tokenType(), tokens.expiresIn());
+    }
+
     @ExceptionHandler(AuthException.class)
     public ResponseEntity<Map<String, Object>> handleAuthException(AuthException ex) {
         if (ex.status() == 423) {

@@ -1,7 +1,11 @@
 package com.careermate.authgw.auth;
 
 import com.careermate.authgw.sms.SmsCodeStore;
+import com.careermate.authgw.sms.PhoneSupport;
+import com.careermate.authgw.sms.SmsProperties;
+import com.careermate.authgw.sms.SmsScene;
 import java.time.Duration;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -14,16 +18,22 @@ public class LoginService {
     private final PasswordHasher passwordHasher;
     private final TokenIssuer tokenIssuer;
     private final SmsCodeStore bucketStore;
+    private final SmsProperties smsProperties;
+    private final JdbcTemplate jdbcTemplate;
 
     public LoginService(
             AuthUserRepository userRepository,
             PasswordHasher passwordHasher,
             TokenIssuer tokenIssuer,
-            SmsCodeStore bucketStore) {
+            SmsCodeStore bucketStore,
+            SmsProperties smsProperties,
+            JdbcTemplate jdbcTemplate) {
         this.userRepository = userRepository;
         this.passwordHasher = passwordHasher;
         this.tokenIssuer = tokenIssuer;
         this.bucketStore = bucketStore;
+        this.smsProperties = smsProperties;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     public TokenPair loginPassword(String account, String password, String targetAud, OAuthClient client) {
@@ -38,6 +48,43 @@ public class LoginService {
             throw fail(key, account);
         }
         bucketStore.delete(key);
+
+        if ("ragforge-admin-api".equals(targetAud) && !"ADMIN".equalsIgnoreCase(user.platformRole())) {
+            throw new AuthException(403, "PLATFORM_ROLE_DENIED", "platform role denied");
+        }
+        return tokenIssuer.issueUserTokens(user, client, targetAud);
+    }
+
+    public TokenPair loginMobile(String phone, String code, String targetAud, OAuthClient client) {
+        String normalizedPhone = PhoneSupport.requireMainlandPhone(phone);
+        String phoneHash = PhoneSupport.hashPhone(normalizedPhone, smsProperties.getPhoneHashPepper());
+        String codeHash = PhoneSupport.hashCode(code, smsProperties.getPhoneHashPepper());
+
+        AuthUser user = userRepository.findByPhoneHash(phoneHash)
+                .orElseThrow(() -> new AuthException(404, "USER_NOT_FOUND", "user not found"));
+        if (!"ACTIVE".equalsIgnoreCase(user.status())) {
+            throw new AuthException(404, "USER_NOT_FOUND", "user not found");
+        }
+
+        Integer updated = jdbcTemplate.update("""
+                        UPDATE sms_codes
+                        SET consumed_at = now()
+                        WHERE id = (
+                            SELECT id
+                            FROM sms_codes
+                            WHERE phone_hash = ?
+                              AND code_hash = ?
+                              AND scene = ?
+                              AND expires_at > now()
+                              AND consumed_at IS NULL
+                            ORDER BY id DESC
+                            LIMIT 1
+                        )
+                        """,
+                phoneHash, codeHash, SmsScene.LOGIN.value());
+        if (updated == null || updated == 0) {
+            throw new AuthException(401, "SMS_CODE_INVALID", "sms code is invalid or expired");
+        }
 
         if ("ragforge-admin-api".equals(targetAud) && !"ADMIN".equalsIgnoreCase(user.platformRole())) {
             throw new AuthException(403, "PLATFORM_ROLE_DENIED", "platform role denied");
