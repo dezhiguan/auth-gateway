@@ -1,0 +1,36 @@
+services:
+  auth-gateway:
+    build: .
+    container_name: auth-gateway
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+    ports:
+      - "8090:8090"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: authdb-postgres
+    environment:
+      POSTGRES_DB: authdb
+      POSTGRES_USER: auth
+      POSTGRES_PASSWORD: auth_dev_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - authdb-postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: authdb-redis
+    command: ["redis-server", "--databases", "16"]
+    ports:
+      - "6380:6379"
+    volumes:
+      - authdb-redis-data:/data
+
+volumes:
+  authdb-postgres-data:
+  authdb-redis-data:
