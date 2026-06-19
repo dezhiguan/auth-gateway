@@ -12,12 +12,11 @@ RELEASE_SHA="${1}"
 SHORT_SHA="${RELEASE_SHA:0:12}"
 RELEASE_DIR="/opt/auth-gateway/releases/${RELEASE_SHA}"
 CURRENT_LINK="/opt/auth-gateway/current"
-K8S_DIR="/opt/auth-gateway/deploy/k8s/auth-gateway"
-NAMESPACE="${AUTH_GATEWAY_K8S_NAMESPACE:-auth-gateway}"
-DEPLOYMENT="auth-gateway"
-IMAGE="auth-gateway:${SHORT_SHA}"
-IMAGE_TAR="/tmp/auth-gateway-${SHORT_SHA}.tar"
-NODEPORT="${AUTH_GATEWAY_NODEPORT:-31091}"
+HEALTH_PORTS=(8090 8091 8092)
+COMPOSE_FILE="/opt/auth-gateway/docker-compose.yml"
+IMAGE_NAME="auth-gateway:latest"
+APP_UID="${AUTH_GATEWAY_APP_UID:-10001}"
+APP_GID="${AUTH_GATEWAY_APP_GID:-10001}"
 
 wait_for_node_ready() {
   local attempts="${1:-60}"
@@ -62,6 +61,19 @@ wait_for_nodeport_health() {
   return 1
 }
 
+env_file_value() {
+  local key="$1"
+  local file="$2"
+  awk -F= -v key="${key}" '
+    $0 !~ /^[[:space:]]*#/ && $1 == key {
+      sub(/^[^=]*=/, "")
+      gsub(/^["'\''"]|["'\''"]$/, "")
+      print
+      exit
+    }
+  ' "${file}"
+}
+
 PREVIOUS_RELEASE="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
 
 on_error() {
@@ -84,8 +96,10 @@ if [[ ! -f /opt/shared/env/common.env || ! -f /opt/shared/env/auth-gateway.env ]
   echo "Missing shared env files: /opt/shared/env/common.env and /opt/shared/env/auth-gateway.env" >&2
   exit 1
 fi
-if [[ ! -f /opt/auth-gateway/keys/auth-active.pem ]]; then
-  echo "Missing active private key: /opt/auth-gateway/keys/auth-active.pem" >&2
+ACTIVE_KEY_PATH="$(env_file_value JWKS_ACTIVE_PRIVATE_KEY_PATH /opt/shared/env/auth-gateway.env)"
+ACTIVE_KEY_PATH="${ACTIVE_KEY_PATH:-/opt/auth-gateway/keys/auth-active.pem}"
+if [[ ! -f "${ACTIVE_KEY_PATH}" ]]; then
+  echo "Missing active private key: ${ACTIVE_KEY_PATH}" >&2
   exit 1
 fi
 if ! command -v k3s >/dev/null 2>&1; then
@@ -93,7 +107,16 @@ if ! command -v k3s >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "[2/8] Previous release: ${PREVIOUS_RELEASE:-<none>}"
+echo "[1.5/6] Ensure container-readable key and log permissions"
+mkdir -p /opt/auth-gateway/logs
+chown -R "${APP_UID}:${APP_GID}" /opt/auth-gateway/keys /opt/auth-gateway/logs
+chmod 750 /opt/auth-gateway/keys
+find /opt/auth-gateway/keys -type f -name '*.pem' -exec chmod 640 {} \;
+chmod 750 /opt/auth-gateway/logs
+
+echo "[2/6] Previous release: ${PREVIOUS_RELEASE:-<none>}"
+
+echo "[3/6] Switch current symlink"
 ln -sfn "${RELEASE_DIR}" "${CURRENT_LINK}"
 
 echo "[3/8] Build Docker image ${IMAGE}"
