@@ -6,7 +6,12 @@ COPY ${JAR_FILE} /app/auth-gateway.jar
 
 EXPOSE 8090
 
-RUN groupadd --system authgateway && useradd --system --gid authgateway authgateway
-USER authgateway
+ARG APP_UID=10001
+ARG APP_GID=10001
+RUN groupadd --system --gid "${APP_GID}" authgateway \
+    && useradd --system --uid "${APP_UID}" --gid authgateway --home-dir /app --shell /usr/sbin/nologin authgateway \
+    && mkdir -p /app/logs \
+    && chown -R authgateway:authgateway /app
+USER 10001:10001
 
 ENTRYPOINT ["java", "-jar", "/app/auth-gateway.jar"]

@@ -14,6 +14,8 @@ CURRENT_LINK="/opt/auth-gateway/current"
 HEALTH_PORTS=(8090 8091 8092)
 COMPOSE_FILE="/opt/auth-gateway/docker-compose.yml"
 IMAGE_NAME="auth-gateway:latest"
+APP_UID="${AUTH_GATEWAY_APP_UID:-10001}"
+APP_GID="${AUTH_GATEWAY_APP_GID:-10001}"
 
 wait_for_port_health() {
   local port="$1"
@@ -32,6 +34,19 @@ wait_for_port_health() {
 
   echo "ERROR: health check timed out: ${url}" >&2
   return 1
+}
+
+env_file_value() {
+  local key="$1"
+  local file="$2"
+  awk -F= -v key="${key}" '
+    $0 !~ /^[[:space:]]*#/ && $1 == key {
+      sub(/^[^=]*=/, "")
+      gsub(/^["'\''"]|["'\''"]$/, "")
+      print
+      exit
+    }
+  ' "${file}"
 }
 
 PREVIOUS_RELEASE="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
@@ -66,10 +81,19 @@ if [[ ! -f /opt/shared/env/common.env || ! -f /opt/shared/env/auth-gateway.env ]
   echo "Missing shared env files: /opt/shared/env/common.env and /opt/shared/env/auth-gateway.env" >&2
   exit 1
 fi
-if [[ ! -f /opt/auth-gateway/keys/auth-active.pem ]]; then
-  echo "Missing active private key: /opt/auth-gateway/keys/auth-active.pem" >&2
+ACTIVE_KEY_PATH="$(env_file_value JWKS_ACTIVE_PRIVATE_KEY_PATH /opt/shared/env/auth-gateway.env)"
+ACTIVE_KEY_PATH="${ACTIVE_KEY_PATH:-/opt/auth-gateway/keys/auth-active.pem}"
+if [[ ! -f "${ACTIVE_KEY_PATH}" ]]; then
+  echo "Missing active private key: ${ACTIVE_KEY_PATH}" >&2
   exit 1
 fi
+
+echo "[1.5/6] Ensure container-readable key and log permissions"
+mkdir -p /opt/auth-gateway/logs
+chown -R "${APP_UID}:${APP_GID}" /opt/auth-gateway/keys /opt/auth-gateway/logs
+chmod 750 /opt/auth-gateway/keys
+find /opt/auth-gateway/keys -type f -name '*.pem' -exec chmod 640 {} \;
+chmod 750 /opt/auth-gateway/logs
 
 echo "[2/6] Previous release: ${PREVIOUS_RELEASE:-<none>}"
 

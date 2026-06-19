@@ -143,7 +143,8 @@ Install private keys on Server 3:
 
 ```bash
 sudo cp config/keys/auth-active.pem /opt/auth-gateway/keys/auth-active.pem
-sudo chmod 600 /opt/auth-gateway/keys/auth-active.pem
+sudo chown 10001:10001 /opt/auth-gateway/keys/auth-active.pem
+sudo chmod 640 /opt/auth-gateway/keys/auth-active.pem
 ```
 
 Key rotation:
@@ -269,7 +270,7 @@ Protocol smoke scripts:
 - Server 1 `authdb` exists and Flyway can migrate.
 - Server 1 Redis is reachable from Server 3.
 - `/opt/shared/env/auth-gateway.env` exists and contains no placeholders.
-- `/opt/auth-gateway/keys/auth-active.pem` exists with mode `600`.
+- `/opt/auth-gateway/keys/auth-active.pem` exists and is readable by container UID/GID `10001:10001` (mode `640`).
 - `/opt/auth-gateway/docker-compose.yml` exists.
 - GitHub Actions secrets are configured.
 - Nginx routes `auth.careermate.cn` to Server 3 replicas.
