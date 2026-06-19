@@ -4,6 +4,7 @@ import com.careermate.authgw.audit.AuditLogService;
 import com.careermate.authgw.crypto.JwtSigner;
 import com.careermate.authgw.crypto.JwksProvider;
 import com.careermate.authgw.events.EventPublisher;
+import com.careermate.authgw.sms.MobileSmsAuthProvider;
 import com.careermate.authgw.sms.PhoneSupport;
 import com.careermate.authgw.sms.SmsCodeStore;
 import com.careermate.authgw.sms.SmsProperties;
@@ -44,6 +45,7 @@ public class PasswordResetService {
     private final JdbcTemplate jdbcTemplate;
     private final SmsProperties smsProperties;
     private final SmsCodeStore codeStore;
+    private final MobileSmsAuthProvider smsProvider;
     private final AuthProperties authProperties;
     private final EventPublisher eventPublisher;
     private final AuditLogService auditLogService;
@@ -57,6 +59,7 @@ public class PasswordResetService {
             JdbcTemplate jdbcTemplate,
             SmsProperties smsProperties,
             SmsCodeStore codeStore,
+            MobileSmsAuthProvider smsProvider,
             AuthProperties authProperties,
             EventPublisher eventPublisher,
             AuditLogService auditLogService) {
@@ -68,27 +71,27 @@ public class PasswordResetService {
         this.jdbcTemplate = jdbcTemplate;
         this.smsProperties = smsProperties;
         this.codeStore = codeStore;
+        this.smsProvider = smsProvider;
         this.authProperties = authProperties;
         this.eventPublisher = eventPublisher;
         this.auditLogService = auditLogService;
     }
 
-    public ResetInitResult init(String account) {
+    public ResetInitResult init(String account, String phone) {
         findResettableUser(account).ifPresent(user -> {
-            if (StringUtils.hasText(user.phoneHash())) {
-                String codeHash = PhoneSupport.hashCode(resolveCode(), smsProperties.getPhoneHashPepper());
-                jdbcTemplate.update("""
-                                INSERT INTO sms_codes(phone_hash, code_hash, scene, expires_at)
-                                VALUES (?, ?, ?, now() + (? * interval '1 second'))
-                                """,
-                        user.phoneHash(), codeHash, SmsScene.RESET.value(), smsProperties.getCodeTtlSeconds());
+            String normalizedPhone = normalizeOptionalPhone(phone);
+            if (StringUtils.hasText(user.phoneHash())
+                    && StringUtils.hasText(normalizedPhone)
+                    && user.phoneHash().equals(PhoneSupport.hashPhone(normalizedPhone, smsProperties.getPhoneHashPepper()))) {
+                String code = resolveCode();
+                smsProvider.sendVerifyCode(new MobileSmsAuthProvider.SendRequest(normalizedPhone, SmsScene.RESET, code));
             }
         });
         return new ResetInitResult(ENUMERATION_SAFE_MASKED_PHONE, true);
     }
 
     @Transactional
-    public String verify(String account, String code) {
+    public String verify(String account, String phone, String code) {
         AuthUser user = findResettableUser(account)
                 .orElseThrow(() -> new AuthException(401, "SMS_CODE_INVALID", "sms code is invalid or expired"));
         String confirmLockKey = confirmLockKey(user.id());
@@ -96,24 +99,15 @@ public class PasswordResetService {
             throw new AuthException(429, "PASSWORD_RESET_LOCKED", "password reset is locked");
         }
 
-        String codeHash = PhoneSupport.hashCode(code, smsProperties.getPhoneHashPepper());
-        int updated = jdbcTemplate.update("""
-                        UPDATE sms_codes
-                        SET consumed_at = now()
-                        WHERE id = (
-                            SELECT id
-                            FROM sms_codes
-                            WHERE phone_hash = ?
-                              AND code_hash = ?
-                              AND scene = ?
-                              AND expires_at > now()
-                              AND consumed_at IS NULL
-                            ORDER BY id DESC
-                            LIMIT 1
-                        )
-                        """,
-                user.phoneHash(), codeHash, SmsScene.RESET.value());
-        if (updated == 0) {
+        String normalizedPhone = normalizeOptionalPhone(phone);
+        if (!StringUtils.hasText(normalizedPhone)
+                || !user.phoneHash().equals(PhoneSupport.hashPhone(normalizedPhone, smsProperties.getPhoneHashPepper()))) {
+            recordConfirmFailure(user.id());
+            throw new AuthException(401, "SMS_CODE_INVALID", "sms code is invalid or expired");
+        }
+        MobileSmsAuthProvider.VerifyResult verifyResult = smsProvider.checkVerifyCode(
+                new MobileSmsAuthProvider.VerifyRequest(normalizedPhone, code, null, SmsScene.RESET));
+        if (!verifyResult.success()) {
             recordConfirmFailure(user.id());
             throw new AuthException(401, "SMS_CODE_INVALID", "sms code is invalid or expired");
         }
@@ -132,6 +126,9 @@ public class PasswordResetService {
             recordConfirmFailure(userId);
             throw new AuthException(400, "PASSWORD_WEAK", "new password is too weak");
         }
+        AuthUser user = userRepository.findById(userId)
+                .orElseThrow(() -> new AuthException(401, "USER_NOT_FOUND", "user not found"));
+        LoginService.enforceRagForgeAdminAccess(targetAud, user);
 
         userRepository.updatePasswordAndIncrementSessionVersion(userId, passwordHasher.hash(newPassword));
         jdbcTemplate.update("""
@@ -150,7 +147,7 @@ public class PasswordResetService {
         eventPublisher.publish("user.password.changed", Map.of("user_id", userId));
         auditLogService.high("user.password.changed", userId, client.clientId(), Map.of("reset_ticket", resetTicket));
 
-        AuthUser user = userRepository.findById(userId)
+        user = userRepository.findById(userId)
                 .orElseThrow(() -> new AuthException(401, "USER_NOT_FOUND", "user not found"));
         return tokenIssuer.issueUserTokens(user, client, targetAud);
     }
@@ -168,6 +165,14 @@ public class PasswordResetService {
             return userRepository.findByPhoneHash(PhoneSupport.hashPhone(phone, smsProperties.getPhoneHashPepper()));
         } catch (RuntimeException ex) {
             return Optional.empty();
+        }
+    }
+
+    private String normalizeOptionalPhone(String phone) {
+        try {
+            return PhoneSupport.requireMainlandPhone(phone);
+        } catch (RuntimeException ex) {
+            return null;
         }
     }
 

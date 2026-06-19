@@ -27,13 +27,13 @@ public class PasswordResetController {
 
     @PostMapping("/auth/password/reset/init")
     public ResetInitResponse init(@RequestBody ResetInitRequest request) {
-        PasswordResetService.ResetInitResult result = passwordResetService.init(request.account());
+        PasswordResetService.ResetInitResult result = passwordResetService.init(request.account(), request.phone());
         return new ResetInitResponse(result.maskedPhone(), result.ticketRequired());
     }
 
     @PostMapping("/auth/password/reset/verify")
     public ResetVerifyResponse verify(@RequestBody ResetVerifyRequest request) {
-        return new ResetVerifyResponse(passwordResetService.verify(request.account(), request.code()));
+        return new ResetVerifyResponse(passwordResetService.verify(request.account(), request.phone(), request.code()));
     }
 
     @PostMapping("/auth/password/reset/confirm")
@@ -56,7 +56,7 @@ public class PasswordResetController {
                 .body(Map.of("error", ex.code(), "message", ex.getMessage()));
     }
 
-    public record ResetInitRequest(String account) {
+    public record ResetInitRequest(String account, String phone) {
     }
 
     @JsonPropertyOrder({"masked_phone", "ticket_required"})

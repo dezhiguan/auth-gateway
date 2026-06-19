@@ -61,9 +61,7 @@ public class LoginService {
         }
         bucketStore.delete(key);
 
-        if ("ragforge-admin-api".equals(targetAud) && !"ADMIN".equalsIgnoreCase(user.platformRole())) {
-            throw new AuthException(403, "PLATFORM_ROLE_DENIED", "platform role denied");
-        }
+        enforceRagForgeAdminAccess(targetAud, user);
         auditLogService.info("login.password.success", user.id(), client.clientId(), java.util.Map.of("target_aud", targetAud));
         return tokenIssuer.issueUserTokens(user, client, targetAud);
     }
@@ -84,11 +82,15 @@ public class LoginService {
             throw new AuthException(404, "USER_NOT_FOUND", "user not found");
         }
 
+        enforceRagForgeAdminAccess(targetAud, user);
+        auditLogService.info("login.mobile.success", user.id(), client.clientId(), java.util.Map.of("target_aud", targetAud, "phone", phone));
+        return tokenIssuer.issueUserTokens(user, client, targetAud);
+    }
+
+    public static void enforceRagForgeAdminAccess(String targetAud, AuthUser user) {
         if ("ragforge-admin-api".equals(targetAud) && !"ADMIN".equalsIgnoreCase(user.platformRole())) {
             throw new AuthException(403, "PLATFORM_ROLE_DENIED", "platform role denied");
         }
-        auditLogService.info("login.mobile.success", user.id(), client.clientId(), java.util.Map.of("target_aud", targetAud, "phone", phone));
-        return tokenIssuer.issueUserTokens(user, client, targetAud);
     }
 
     private AuthException fail(String key, String account) {
