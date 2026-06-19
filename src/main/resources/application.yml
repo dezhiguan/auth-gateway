@@ -7,7 +7,7 @@ spring:
   profiles:
     active: dev
   datasource:
-    url: ${AUTH_DB_URL:jdbc:postgresql://localhost:5433/authdb}
+    url: ${AUTH_DB_URL:jdbc:postgresql://localhost:5432/authdb}
     username: ${AUTH_DB_USERNAME:auth}
     password: ${AUTH_DB_PASSWORD:auth_dev_password}
 

@@ -2,6 +2,8 @@ package com.careermate.authgw.auth;
 
 import com.careermate.authgw.audit.AuditLogService;
 import com.careermate.authgw.sms.SmsCodeStore;
+import com.careermate.authgw.sms.SmsAuthRateLimiter;
+import com.careermate.authgw.sms.MobileSmsAuthProvider;
 import com.careermate.authgw.sms.PhoneSupport;
 import com.careermate.authgw.sms.SmsProperties;
 import com.careermate.authgw.sms.SmsScene;
@@ -19,6 +21,8 @@ public class LoginService {
     private final PasswordHasher passwordHasher;
     private final TokenIssuer tokenIssuer;
     private final SmsCodeStore bucketStore;
+    private final SmsAuthRateLimiter smsRateLimiter;
+    private final MobileSmsAuthProvider smsProvider;
     private final SmsProperties smsProperties;
     private final JdbcTemplate jdbcTemplate;
     private final AuditLogService auditLogService;
@@ -28,6 +32,8 @@ public class LoginService {
             PasswordHasher passwordHasher,
             TokenIssuer tokenIssuer,
             SmsCodeStore bucketStore,
+            SmsAuthRateLimiter smsRateLimiter,
+            MobileSmsAuthProvider smsProvider,
             SmsProperties smsProperties,
             JdbcTemplate jdbcTemplate,
             AuditLogService auditLogService) {
@@ -35,6 +41,8 @@ public class LoginService {
         this.passwordHasher = passwordHasher;
         this.tokenIssuer = tokenIssuer;
         this.bucketStore = bucketStore;
+        this.smsRateLimiter = smsRateLimiter;
+        this.smsProvider = smsProvider;
         this.smsProperties = smsProperties;
         this.jdbcTemplate = jdbcTemplate;
         this.auditLogService = auditLogService;
@@ -63,32 +71,17 @@ public class LoginService {
     public TokenPair loginMobile(String phone, String code, String targetAud, OAuthClient client) {
         String normalizedPhone = PhoneSupport.requireMainlandPhone(phone);
         String phoneHash = PhoneSupport.hashPhone(normalizedPhone, smsProperties.getPhoneHashPepper());
-        String codeHash = PhoneSupport.hashCode(code, smsProperties.getPhoneHashPepper());
+        MobileSmsAuthProvider.VerifyResult verifyResult = smsProvider.checkVerifyCode(
+                new MobileSmsAuthProvider.VerifyRequest(normalizedPhone, code, null, SmsScene.LOGIN));
+        if (!verifyResult.success()) {
+            throw new AuthException(401, "SMS_CODE_INVALID", "sms code is invalid or expired");
+        }
+        smsRateLimiter.clearPendingCode(SmsScene.LOGIN, phoneHash);
 
         AuthUser user = userRepository.findByPhoneHash(phoneHash)
-                .orElseThrow(() -> new AuthException(404, "USER_NOT_FOUND", "user not found"));
+                .orElseGet(() -> userRepository.createMobileUser(phoneHash));
         if (!"ACTIVE".equalsIgnoreCase(user.status())) {
             throw new AuthException(404, "USER_NOT_FOUND", "user not found");
-        }
-
-        Integer updated = jdbcTemplate.update("""
-                        UPDATE sms_codes
-                        SET consumed_at = now()
-                        WHERE id = (
-                            SELECT id
-                            FROM sms_codes
-                            WHERE phone_hash = ?
-                              AND code_hash = ?
-                              AND scene = ?
-                              AND expires_at > now()
-                              AND consumed_at IS NULL
-                            ORDER BY id DESC
-                            LIMIT 1
-                        )
-                        """,
-                phoneHash, codeHash, SmsScene.LOGIN.value());
-        if (updated == null || updated == 0) {
-            throw new AuthException(401, "SMS_CODE_INVALID", "sms code is invalid or expired");
         }
 
         if ("ragforge-admin-api".equals(targetAud) && !"ADMIN".equalsIgnoreCase(user.platformRole())) {

@@ -173,6 +173,9 @@ public class TokenIssuer {
     }
 
     private List<String> scopesFor(AuthUser user, String targetAud) {
+        if ("careermate-api".equals(targetAud)) {
+            return List.of("rag:search");
+        }
         if ("ragforge-admin-api".equals(targetAud) && "ADMIN".equalsIgnoreCase(user.platformRole())) {
             return List.of("rag:admin:read", "rag:admin:write");
         }

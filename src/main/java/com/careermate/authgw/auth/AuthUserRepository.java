@@ -40,6 +40,18 @@ public class AuthUserRepository {
         return users.stream().findFirst();
     }
 
+    public AuthUser createMobileUser(String phoneHash) {
+        String tenantId = "tn_phone_" + phoneHash.substring(0, Math.min(16, phoneHash.length()));
+        return jdbcTemplate.queryForObject("""
+                        INSERT INTO auth_users(phone_hash, tenant_id, platform_role, session_version, status, created_at)
+                        VALUES (?, ?, 'USER', 0, 'ACTIVE', now())
+                        RETURNING id, phone_hash, email_hash, username, password_hash, tenant_id, platform_role, session_version, status
+                        """,
+                (rs, rowNum) -> mapUser(rs),
+                phoneHash,
+                tenantId);
+    }
+
     public Optional<AuthUser> findById(long id) {
         List<AuthUser> users = jdbcTemplate.query("""
                         SELECT id, phone_hash, email_hash, username, password_hash, tenant_id, platform_role, session_version, status

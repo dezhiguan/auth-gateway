@@ -19,7 +19,7 @@
 
     <properties>
         <java.version>21</java.version>
-        <flyway.url>jdbc:postgresql://localhost:5433/authdb</flyway.url>
+        <flyway.url>jdbc:postgresql://localhost:5432/authdb</flyway.url>
         <flyway.user>auth</flyway.user>
         <flyway.password>auth_dev_password</flyway.password>
     </properties>
