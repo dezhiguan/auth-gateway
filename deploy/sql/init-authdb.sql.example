@@ -1,0 +1,6 @@
+-- Run on Server 1 PostgreSQL as an admin user.
+-- Replace the password before running. Do not commit real credentials.
+
+CREATE USER auth WITH PASSWORD '<CHANGE_ME_AUTH_DB_PASSWORD>';
+CREATE DATABASE authdb OWNER auth;
+GRANT ALL PRIVILEGES ON DATABASE authdb TO auth;

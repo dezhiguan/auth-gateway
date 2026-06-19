@@ -1,0 +1,249 @@
+name: Auth Gateway CI/CD
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auth-gateway-ci-cd-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security-scan:
+    name: security-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run static security scan
+        run: |
+          python -m pip install --upgrade pip
+          pip install semgrep
+          semgrep scan \
+            --config p/owasp-top-ten \
+            --config p/secrets \
+            --error \
+            --metrics=off \
+            --exclude '**/target' \
+            --exclude '**/node_modules' \
+            --exclude '**/dist' \
+            .
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - security-scan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Package service
+        run: ./mvnw -B -DskipTests package
+
+      - name: Resolve JAR
+        id: jar
+        run: |
+          JAR_FILE="$(find target -maxdepth 1 -name 'auth-gateway-*.jar' ! -name '*.original' | head -n 1)"
+          if [[ -z "${JAR_FILE}" ]]; then
+            echo "No auth-gateway JAR found under target"
+            exit 1
+          fi
+          echo "path=${JAR_FILE}" >> "${GITHUB_OUTPUT}"
+          echo "Using JAR: ${JAR_FILE}"
+
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: auth-gateway-jar
+          path: ${{ steps.jar.outputs.path }}
+          if-no-files-found: error
+
+  unit-test:
+    name: unit-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - build
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: authdb
+          POSTGRES_USER: auth
+          POSTGRES_PASSWORD: auth_dev_password
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U auth -d authdb"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Run tests
+        env:
+          SPRING_PROFILES_ACTIVE: dev
+          AUTH_DB_URL: jdbc:postgresql://localhost:5433/authdb
+          AUTH_DB_USERNAME: auth
+          AUTH_DB_PASSWORD: auth_dev_password
+          SPRING_DATA_REDIS_HOST: localhost
+          SPRING_DATA_REDIS_PORT: 6380
+        run: ./mvnw -B test
+
+      - name: Upload test reports
+        uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: auth-gateway-test-reports
+          path: target/surefire-reports/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  deploy-server3:
+    name: deploy-server3
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    needs:
+      - build
+      - unit-test
+    environment:
+      name: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download JAR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: auth-gateway-jar
+
+      - name: Configure SSH (Server 3)
+        env:
+          SSH_KEY: ${{ secrets.AUTH_GATEWAY_APP_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.AUTH_GATEWAY_APP_HOST }}
+          DEPLOY_USER: ${{ secrets.AUTH_GATEWAY_APP_USER }}
+          DEPLOY_PORT: ${{ secrets.AUTH_GATEWAY_APP_PORT }}
+          JUMP_HOST: ${{ secrets.CAREERMATE_INGRESS_HOST }}
+          JUMP_USER: ${{ secrets.CAREERMATE_INGRESS_USER }}
+          JUMP_PORT: ${{ secrets.CAREERMATE_INGRESS_PORT }}
+        run: |
+          if [[ -z "${SSH_KEY}" || -z "${DEPLOY_HOST}" || -z "${DEPLOY_USER}" ]]; then
+            echo "AUTH_GATEWAY_APP_SSH_KEY, AUTH_GATEWAY_APP_HOST and AUTH_GATEWAY_APP_USER must be set"
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "${SSH_KEY}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          PORT="${DEPLOY_PORT:-22}"
+          JUMP_HOST="${JUMP_HOST:-8.163.63.222}"
+          JUMP_USER="${JUMP_USER:-root}"
+          JUMP_PORT="${JUMP_PORT:-22}"
+          ssh-keyscan -p "${JUMP_PORT}" "${JUMP_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          {
+            printf '%s\n' 'Host auth-gateway-jump'
+            printf '%s\n' "  HostName ${JUMP_HOST}"
+            printf '%s\n' "  User ${JUMP_USER}"
+            printf '%s\n' "  Port ${JUMP_PORT}"
+            printf '%s\n' '  IdentityFile ~/.ssh/deploy_key'
+            printf '%s\n' '  IdentitiesOnly yes'
+            printf '%s\n' '  StrictHostKeyChecking accept-new'
+            printf '%s\n' '  BatchMode yes'
+            printf '%s\n' '  ConnectTimeout 15'
+            printf '%s\n' ''
+            printf '%s\n' 'Host auth-gateway-app'
+            printf '%s\n' "  HostName ${DEPLOY_HOST}"
+            printf '%s\n' "  User ${DEPLOY_USER}"
+            printf '%s\n' "  Port ${PORT}"
+            printf '%s\n' '  IdentityFile ~/.ssh/deploy_key'
+            printf '%s\n' '  IdentitiesOnly yes'
+            printf '%s\n' '  StrictHostKeyChecking accept-new'
+            printf '%s\n' '  BatchMode yes'
+            printf '%s\n' '  ConnectTimeout 15'
+            printf '%s\n' '  ServerAliveInterval 30'
+            printf '%s\n' '  ServerAliveCountMax 3'
+            printf '%s\n' '  ProxyJump auth-gateway-jump'
+          } > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+      - name: Upload release files to Server 3
+        env:
+          DEPLOY_USER: ${{ secrets.AUTH_GATEWAY_APP_USER }}
+        run: |
+          SSH_OPTS=(-T -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
+          SCP_OPTS=(-F "${HOME}/.ssh/config" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
+          RELEASE_SHA="${GITHUB_SHA}"
+          JAR_FILE="$(find . -maxdepth 1 -name 'auth-gateway-*.jar' ! -name '*.original' | head -n 1)"
+          if [[ -z "${JAR_FILE}" ]]; then
+            echo "No auth-gateway JAR artifact found after download"
+            exit 1
+          fi
+          ssh "${SSH_OPTS[@]}" auth-gateway-app \
+            "sudo mkdir -p /opt/auth-gateway/releases/${RELEASE_SHA} /opt/auth-gateway/scripts && sudo chown -R ${DEPLOY_USER}:${DEPLOY_USER} /opt/auth-gateway/releases/${RELEASE_SHA} /opt/auth-gateway/scripts"
+          scp "${SCP_OPTS[@]}" "${JAR_FILE}" "auth-gateway-app:/opt/auth-gateway/releases/${RELEASE_SHA}/app.jar"
+          scp "${SCP_OPTS[@]}" Dockerfile "auth-gateway-app:/opt/auth-gateway/releases/${RELEASE_SHA}/Dockerfile"
+          scp "${SCP_OPTS[@]}" deploy/scripts/deploy-from-github.sh deploy/scripts/rollback-auth-gateway.sh \
+            "auth-gateway-app:/opt/auth-gateway/scripts/"
+
+      - name: Deploy Auth Gateway on Server 3
+        run: |
+          SSH_OPTS=(-T -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
+          timeout 20m ssh "${SSH_OPTS[@]}" auth-gateway-app \
+            "sudo bash /opt/auth-gateway/scripts/deploy-from-github.sh '${GITHUB_SHA}'"
+
+  smoke-test:
+    name: smoke-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    needs:
+      - deploy-server3
+    steps:
+      - name: Health check
+        run: |
+          BASE="${{ vars.AUTH_GATEWAY_BASE_URL || 'https://auth.careermate.cn' }}"
+          curl --fail --silent --show-error --max-time 10 --retry 6 --retry-delay 5 \
+            "${BASE}/actuator/health" | grep -q '"status":"UP"'
+
+      - name: JWKS check
+        run: |
+          BASE="${{ vars.AUTH_GATEWAY_BASE_URL || 'https://auth.careermate.cn' }}"
+          curl --fail --silent --show-error --max-time 10 --retry 6 --retry-delay 5 \
+            "${BASE}/.well-known/jwks.json" | grep -q '"keys"'

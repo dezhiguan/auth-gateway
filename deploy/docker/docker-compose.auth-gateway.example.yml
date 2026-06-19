@@ -1,0 +1,39 @@
+services:
+  auth-gateway-1:
+    image: auth-gateway:latest
+    container_name: auth-gateway-1
+    restart: unless-stopped
+    env_file:
+      - /opt/shared/env/common.env
+      - /opt/shared/env/auth-gateway.env
+    ports:
+      - "8090:8090"
+    volumes:
+      - /opt/auth-gateway/keys:/opt/auth-gateway/keys:ro
+      - /opt/auth-gateway/logs:/app/logs
+
+  auth-gateway-2:
+    image: auth-gateway:latest
+    container_name: auth-gateway-2
+    restart: unless-stopped
+    env_file:
+      - /opt/shared/env/common.env
+      - /opt/shared/env/auth-gateway.env
+    ports:
+      - "8091:8090"
+    volumes:
+      - /opt/auth-gateway/keys:/opt/auth-gateway/keys:ro
+      - /opt/auth-gateway/logs:/app/logs
+
+  auth-gateway-3:
+    image: auth-gateway:latest
+    container_name: auth-gateway-3
+    restart: unless-stopped
+    env_file:
+      - /opt/shared/env/common.env
+      - /opt/shared/env/auth-gateway.env
+    ports:
+      - "8092:8090"
+    volumes:
+      - /opt/auth-gateway/keys:/opt/auth-gateway/keys:ro
+      - /opt/auth-gateway/logs:/app/logs

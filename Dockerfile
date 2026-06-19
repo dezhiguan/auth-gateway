@@ -1,7 +1,8 @@
-FROM eclipse-temurin:17-jre-jammy
+FROM eclipse-temurin:21-jre-jammy
 
 WORKDIR /app
-COPY target/auth-gateway-*.jar /app/auth-gateway.jar
+ARG JAR_FILE=target/auth-gateway-*.jar
+COPY ${JAR_FILE} /app/auth-gateway.jar
 
 EXPOSE 8090
 

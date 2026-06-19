@@ -1,5 +1,5 @@
 server:
-  port: 8090
+  port: ${SERVER_PORT:8090}
 
 spring:
   application:
@@ -25,18 +25,18 @@ management:
         enabled: true
 
 jwks:
-  active-kid: auth-active
-  previous-kid: auth-previous
+  active-kid: ${JWKS_ACTIVE_KID:auth-active}
+  previous-kid: ${JWKS_PREVIOUS_KID:auth-previous}
   key-store:
-    active-private-key: config/keys/auth-active.pem
-    previous-private-key: config/keys/auth-previous.pem
+    active-private-key: ${JWKS_ACTIVE_PRIVATE_KEY_PATH:config/keys/auth-active.pem}
+    previous-private-key: ${JWKS_PREVIOUS_PRIVATE_KEY_PATH:config/keys/auth-previous.pem}
 
 auth:
   issuer: ${AUTH_ISSUER:https://auth.careermate.cn}
   token-endpoint-audience: ${AUTH_TOKEN_ENDPOINT_AUDIENCE:https://auth.careermate.cn/oauth/token}
-  access-token-ttl-seconds: 900
-  refresh-token-ttl-seconds: 604800
-  exchange-token-ttl-seconds: 600
+  access-token-ttl-seconds: ${AUTH_ACCESS_TOKEN_TTL_SECONDS:900}
+  refresh-token-ttl-seconds: ${AUTH_REFRESH_TOKEN_TTL_SECONDS:604800}
+  exchange-token-ttl-seconds: ${AUTH_EXCHANGE_TOKEN_TTL_SECONDS:600}
   sms:
     storage: memory
     phone-hash-pepper: ${AUTH_SMS_PHONE_HASH_PEPPER:auth-gateway-dev-pepper}
