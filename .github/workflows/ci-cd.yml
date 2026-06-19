@@ -157,7 +157,7 @@ jobs:
 
       - name: Configure SSH (Server 3)
         env:
-          SSH_KEY: ${{ secrets.AUTH_GATEWAY_APP_SSH_KEY }}
+          SSH_KEY: ${{ secrets.AUTH_GATEWAY_APP_SSH_KEY || secrets.CAREERMATE_APP_SSH_KEY || secrets.RAGFORGE_APP_SSH_KEY }}
           DEPLOY_HOST: ${{ secrets.AUTH_GATEWAY_APP_HOST }}
           DEPLOY_USER: ${{ secrets.AUTH_GATEWAY_APP_USER }}
           DEPLOY_PORT: ${{ secrets.AUTH_GATEWAY_APP_PORT }}
@@ -165,13 +165,14 @@ jobs:
           JUMP_USER: ${{ secrets.CAREERMATE_INGRESS_USER }}
           JUMP_PORT: ${{ secrets.CAREERMATE_INGRESS_PORT }}
         run: |
-          if [[ -z "${SSH_KEY}" || -z "${DEPLOY_HOST}" || -z "${DEPLOY_USER}" ]]; then
-            echo "AUTH_GATEWAY_APP_SSH_KEY, AUTH_GATEWAY_APP_HOST and AUTH_GATEWAY_APP_USER must be set"
+          if [[ -z "${SSH_KEY}" || -z "${DEPLOY_HOST}" ]]; then
+            echo "AUTH_GATEWAY_APP_SSH_KEY and AUTH_GATEWAY_APP_HOST must be set"
             exit 1
           fi
           mkdir -p ~/.ssh
           printf '%s\n' "${SSH_KEY}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+          DEPLOY_USER="${DEPLOY_USER:-root}"
           PORT="${DEPLOY_PORT:-22}"
           JUMP_HOST="${JUMP_HOST:-8.163.63.222}"
           JUMP_USER="${JUMP_USER:-root}"
@@ -207,6 +208,7 @@ jobs:
         env:
           DEPLOY_USER: ${{ secrets.AUTH_GATEWAY_APP_USER }}
         run: |
+          DEPLOY_USER="${DEPLOY_USER:-root}"
           SSH_OPTS=(-T -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
           SCP_OPTS=(-F "${HOME}/.ssh/config" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
           RELEASE_SHA="${GITHUB_SHA}"
