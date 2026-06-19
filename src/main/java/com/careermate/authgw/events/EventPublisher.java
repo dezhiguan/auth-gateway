@@ -1,13 +1,9 @@
 package com.careermate.authgw.events;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -19,54 +15,84 @@ public class EventPublisher {
     private static final Logger log = LoggerFactory.getLogger(EventPublisher.class);
 
     private final JdbcTemplate jdbcTemplate;
-    private final ObjectMapper objectMapper;
+    private final EventOutboxRepository eventOutboxRepository;
+    private final EventDelivery eventDelivery;
 
-    public EventPublisher(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+    public EventPublisher(
+            JdbcTemplate jdbcTemplate,
+            EventOutboxRepository eventOutboxRepository,
+            EventDelivery eventDelivery) {
         this.jdbcTemplate = jdbcTemplate;
-        this.objectMapper = objectMapper;
+        this.eventOutboxRepository = eventOutboxRepository;
+        this.eventDelivery = eventDelivery;
     }
 
     public void publish(String eventType, Map<String, Object> payload) {
         Instant occurredAt = Instant.now();
-        Map<String, Object> envelope = Map.of(
-                "event_type", eventType,
-                "occurred_at", occurredAt.toString(),
-                "payload", payload);
         List<Subscription> subscriptions = subscriptionsFor(eventType);
         if (subscriptions.isEmpty()) {
             log.info("auth event published type={}, at={}, payload={}, deliveries=0", eventType, occurredAt, payload);
             return;
         }
-        subscriptions.forEach(subscription -> log.info(
-                "auth event delivery prepared type={}, endpoint={}, hmac_key_id={}, signature={}",
+        subscriptions.forEach(subscription -> publishToSubscription(eventType, occurredAt, payload, subscription));
+    }
+
+    private void publishToSubscription(
+            String eventType,
+            Instant occurredAt,
+            Map<String, Object> payload,
+            Subscription subscription) {
+        String eventId = UUID.randomUUID().toString();
+        Map<String, Object> envelope = Map.of(
+                "event_id", eventId,
+                "event_type", eventType,
+                "occurred_at", occurredAt.toString(),
+                "payload", payload);
+        eventOutboxRepository.createPending(
+                eventId,
                 eventType,
+                subscription.subscriber(),
                 subscription.endpointUrl(),
-                subscription.hmacKeyId(),
-                signature(subscription.hmacKeyId(), envelope)));
+                envelope);
+        EventDelivery.DeliveryResult result = eventDelivery.deliver(
+                subscription.endpointUrl(),
+                subscription.hmacSecret(),
+                envelope);
+        if (result.delivered()) {
+            eventOutboxRepository.markDelivered(eventId, result.attempts(), Instant.now());
+            log.info(
+                    "auth event delivered event_id={}, type={}, subscriber={}, endpoint={}, attempts={}",
+                    eventId,
+                    eventType,
+                    subscription.subscriber(),
+                    subscription.endpointUrl(),
+                    result.attempts());
+            return;
+        }
+        eventOutboxRepository.markFailed(eventId, result.attempts(), result.lastError());
+        log.error(
+                "auth event delivery failed event_id={}, type={}, subscriber={}, endpoint={}, attempts={}, error={}",
+                eventId,
+                eventType,
+                subscription.subscriber(),
+                subscription.endpointUrl(),
+                result.attempts(),
+                result.lastError());
     }
 
     private List<Subscription> subscriptionsFor(String eventType) {
         return jdbcTemplate.query("""
-                        SELECT endpoint_url, hmac_key_id
+                        SELECT subscriber, endpoint_url, hmac_secret
                         FROM event_subscriptions
                         WHERE status = 'ACTIVE' AND jsonb_exists(event_types, ?)
                         """,
-                (rs, rowNum) -> new Subscription(rs.getString("endpoint_url"), rs.getString("hmac_key_id")),
+                (rs, rowNum) -> new Subscription(
+                        rs.getString("subscriber"),
+                        rs.getString("endpoint_url"),
+                        rs.getString("hmac_secret")),
                 eventType);
     }
 
-    private String signature(String hmacKeyId, Map<String, Object> envelope) {
-        try {
-            byte[] body = objectMapper.writeValueAsBytes(envelope);
-            Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(hmacKeyId.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
-            byte[] digest = mac.doFinal(body);
-            return "sha256=" + HexFormat.of().formatHex(digest);
-        } catch (Exception ex) {
-            throw new IllegalStateException("failed to sign auth event", ex);
-        }
-    }
-
-    private record Subscription(String endpointUrl, String hmacKeyId) {
+    private record Subscription(String subscriber, String endpointUrl, String hmacSecret) {
     }
 }
