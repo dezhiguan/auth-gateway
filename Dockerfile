@@ -6,4 +6,7 @@ COPY ${JAR_FILE} /app/auth-gateway.jar
 
 EXPOSE 8090
 
+RUN groupadd --system authgateway && useradd --system --gid authgateway authgateway
+USER authgateway
+
 ENTRYPOINT ["java", "-jar", "/app/auth-gateway.jar"]
