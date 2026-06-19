@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-gateway
+  namespace: auth-gateway
+  labels:
+    app: auth-gateway
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  minReadySeconds: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: auth-gateway
+  template:
+    metadata:
+      labels:
+        app: auth-gateway
+    spec:
+      containers:
+        - name: auth-gateway
+          image: auth-gateway:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+          ports:
+            - name: http
+              containerPort: 8090
+          envFrom:
+            - secretRef:
+                name: auth-gateway-env
+          env:
+            - name: SERVER_PORT
+              value: "8090"
+            - name: SPRING_PROFILES_ACTIVE
+              value: prod
+            - name: JWKS_ACTIVE_PRIVATE_KEY_PATH
+              value: /opt/auth-gateway/keys/auth-active.pem
+            - name: JWKS_PREVIOUS_PRIVATE_KEY_PATH
+              value: ""
+            - name: JAVA_TOOL_OPTIONS
+              value: "-Xms128m -Xmx256m"
+          startupProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: jwks-keys
+              mountPath: /opt/auth-gateway/keys
+              readOnly: true
+            - name: logs
+              mountPath: /app/logs
+      volumes:
+        - name: jwks-keys
+          hostPath:
+            path: /opt/auth-gateway/keys
+            type: Directory
+        - name: logs
+          hostPath:
+            path: /opt/auth-gateway/logs/k8s
+            type: DirectoryOrCreate

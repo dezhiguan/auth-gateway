@@ -2,20 +2,22 @@
 
 ## 1. Topology
 
-Auth Gateway is deployed on Server 3 with CareerMate and RAGForge app services.
+Auth Gateway runs on Server 3 single-node k3s with CareerMate and RAGForge app services.
 
 | Layer | Private IP | Services |
 |---|---:|---|
 | Server 1 Data | `172.25.90.183` | PostgreSQL `authdb`, Redis |
-| Server 2 Ingress | `172.19.40.32` | Nginx public entry `https://auth.careermate.cn` |
-| Server 3 App | `172.25.90.184` | `auth-gateway` replicas on `8090/8091/8092` |
+| Server 2 Ingress | `172.19.40.32` | Nginx public entry `auth.careermate.cn` |
+| Server 3 App | `172.25.90.184` | k3s `auth-gateway` Deployment, NodePort `31091` |
 
 Public traffic:
 
 ```text
 auth.careermate.cn
-  -> Server 2 Nginx
-  -> Server 3 auth-gateway upstream :8090/:8091/:8092
+  -> Server 2 ragforge-nginx container
+  -> Server 3 172.25.90.184:31091
+  -> k3s Service auth-gateway
+  -> 3 auth-gateway Pods
 ```
 
 ## 2. Repository Artifacts
@@ -25,20 +27,18 @@ Important files:
 ```text
 .github/workflows/ci-cd.yml
 Dockerfile
-deploy/docker/docker-compose.auth-gateway.example.yml
 deploy/env/auth-gateway.env.example
+deploy/k8s/auth-gateway/namespace.yaml
+deploy/k8s/auth-gateway/deployment.yaml
+deploy/k8s/auth-gateway/service.yaml
 deploy/nginx/auth-gateway.conf.example
+deploy/scripts/create-auth-gateway-k8s-secret.sh
 deploy/scripts/deploy-from-github.sh
 deploy/scripts/rollback-auth-gateway.sh
 deploy/sql/init-authdb.sql.example
 ```
 
-Build locally:
-
-```bash
-./mvnw -DskipTests package
-docker build -t auth-gateway:latest .
-```
+`deploy/docker/docker-compose.auth-gateway.example.yml` is retained as a legacy reference only. The production deploy path is k3s.
 
 ## 3. Server 1 Prerequisites
 
@@ -58,7 +58,7 @@ SPRING_DATA_REDIS_HOST=172.25.90.183
 SPRING_DATA_REDIS_PORT=6379
 ```
 
-## 4. Server 3 Directories
+## 4. Server 3 Prerequisites
 
 Create once:
 
@@ -66,8 +66,9 @@ Create once:
 sudo mkdir -p \
   /opt/auth-gateway/releases \
   /opt/auth-gateway/scripts \
+  /opt/auth-gateway/deploy/k8s/auth-gateway \
   /opt/auth-gateway/keys \
-  /opt/auth-gateway/logs \
+  /opt/auth-gateway/logs/k8s \
   /opt/shared/env
 sudo chmod 700 /opt/auth-gateway/keys
 ```
@@ -80,12 +81,16 @@ Expected layout:
   releases/<git-sha>/
     app.jar
     Dockerfile
-  docker-compose.yml
+  deploy/k8s/auth-gateway/
+    namespace.yaml
+    deployment.yaml
+    service.yaml
   keys/
     auth-active.pem
     auth-previous.pem        # optional, for key rotation
-  logs/
+  logs/k8s/
   scripts/
+    create-auth-gateway-k8s-secret.sh
     deploy-from-github.sh
     rollback-auth-gateway.sh
 
@@ -94,19 +99,7 @@ Expected layout:
   auth-gateway.env
 ```
 
-Copy `deploy/docker/docker-compose.auth-gateway.example.yml` to:
-
-```text
-/opt/auth-gateway/docker-compose.yml
-```
-
-Copy `deploy/env/auth-gateway.env.example` to:
-
-```text
-/opt/shared/env/auth-gateway.env
-```
-
-Then replace all `<CHANGE_ME_...>` values.
+Server 3 must have Docker and k3s installed. The deploy script builds the Docker image on Server 3, imports it into k3s containerd, then rolls the k3s Deployment.
 
 ## 5. Required Production Config
 
@@ -118,6 +111,7 @@ AUTH_DB_URL=jdbc:postgresql://172.25.90.183:5432/authdb
 AUTH_DB_USERNAME=auth
 AUTH_DB_PASSWORD=<secret>
 SPRING_DATA_REDIS_HOST=172.25.90.183
+SPRING_DATA_REDIS_PORT=6379
 AUTH_ISSUER=https://auth.careermate.cn
 AUTH_TOKEN_ENDPOINT_AUDIENCE=https://auth.careermate.cn/oauth/token
 JWKS_ACTIVE_KID=auth-active
@@ -127,6 +121,7 @@ ALIYUN_SMS_ACCESS_KEY_ID=<secret>
 ALIYUN_SMS_ACCESS_KEY_SECRET=<secret>
 ALIYUN_SMS_SIGN_NAME=CareerMate
 ALIYUN_SMS_TEMPLATE_CODE=SMS_XXXXXX
+JAVA_TOOL_OPTIONS="-Xms128m -Xmx256m"
 ```
 
 Do not store real secrets in GitHub repository files.
@@ -147,32 +142,27 @@ sudo chown 10001:10001 /opt/auth-gateway/keys/auth-active.pem
 sudo chmod 640 /opt/auth-gateway/keys/auth-active.pem
 ```
 
-Key rotation:
-
-1. Put the new private key in `/opt/auth-gateway/keys/auth-active.pem`.
-2. Move the old active key to `/opt/auth-gateway/keys/auth-previous.pem`.
-3. Set `JWKS_PREVIOUS_KID` and `JWKS_PREVIOUS_PRIVATE_KEY_PATH`.
-4. Deploy and verify `/.well-known/jwks.json` exposes both keys during the overlap window.
+The k3s Deployment mounts `/opt/auth-gateway/keys` read-only into each Pod.
 
 ## 7. GitHub Actions Secrets
 
-Set repository secrets:
+Required repository secrets:
 
 | Secret | Description |
 |---|---|
 | `AUTH_GATEWAY_APP_SSH_KEY` | SSH private key for Server 3 deploy |
-| `AUTH_GATEWAY_APP_HOST` | Server 3 private or reachable host |
-| `AUTH_GATEWAY_APP_USER` | SSH user on Server 3 |
-| `AUTH_GATEWAY_APP_PORT` | SSH port, optional |
+| `AUTH_GATEWAY_APP_HOST` | Server 3 host, usually `172.25.90.184` if reachable through jump host |
+| `AUTH_GATEWAY_APP_USER` | SSH user on Server 3, optional if root fallback is acceptable |
+| `AUTH_GATEWAY_APP_PORT` | SSH port, optional, defaults to `22` |
 | `CAREERMATE_INGRESS_HOST` | Server 2 jump host |
-| `CAREERMATE_INGRESS_USER` | Server 2 jump user |
-| `CAREERMATE_INGRESS_PORT` | Server 2 jump port, optional |
+| `CAREERMATE_INGRESS_USER` | Server 2 jump user, optional, defaults to `root` |
+| `CAREERMATE_INGRESS_PORT` | Server 2 jump port, optional, defaults to `22` |
 
-Set repository variable:
+Optional repository variable:
 
 | Variable | Default |
 |---|---|
-| `AUTH_GATEWAY_BASE_URL` | `https://auth.careermate.cn` |
+| `AUTH_GATEWAY_BASE_URL` | `http://auth.careermate.cn` |
 
 ## 8. CI/CD Flow
 
@@ -185,14 +175,13 @@ On pull request:
 On push to `main`:
 
 1. Build and test.
-2. Upload JAR to Server 3 release directory.
-3. Upload `Dockerfile` and deployment scripts.
-4. Build Docker image on Server 3.
-5. Rolling restart:
-   - `auth-gateway-1` -> `8090`
-   - `auth-gateway-2` -> `8091`
-   - `auth-gateway-3` -> `8092`
-6. Smoke checks:
+2. Upload JAR, Dockerfile, scripts, and k8s manifests to Server 3.
+3. Build Docker image on Server 3.
+4. Import the image into k3s containerd.
+5. Create/update `auth-gateway-env` Secret from `/opt/shared/env/common.env` and `/opt/shared/env/auth-gateway.env`.
+6. Apply namespace, service, deployment.
+7. Roll out 3 Pods.
+8. Smoke checks:
    - `/actuator/health`
    - `/.well-known/jwks.json`
 
@@ -212,15 +201,11 @@ sudo bash /opt/auth-gateway/scripts/rollback-auth-gateway.sh /opt/auth-gateway/r
 
 ## 10. Nginx Upstream
 
-Server 2 Nginx should route `auth.careermate.cn` to the Server 3 replicas:
-
-Use `deploy/nginx/auth-gateway.conf.example` as the base config.
+Server 2 Nginx should route `auth.careermate.cn` to Server 3 k3s NodePort:
 
 ```nginx
 upstream auth_gateway_backend {
-    server 172.25.90.184:8090;
-    server 172.25.90.184:8091;
-    server 172.25.90.184:8092;
+    server 172.25.90.184:31091;
 }
 
 server {
@@ -228,7 +213,7 @@ server {
 
     location / {
         proxy_pass http://auth_gateway_backend;
-        proxy_set_header Host $host;
+        proxy_set_header Host auth.careermate.cn;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -236,24 +221,24 @@ server {
 }
 ```
 
-If Server 2 cannot directly reach Server 3 private ports, keep the same tunnel approach used by CareerMate and point the upstream at Server 2 local tunnel ports.
+Use `deploy/nginx/auth-gateway.conf.example` as the base config.
 
 ## 11. Verification
 
 From Server 3:
 
 ```bash
-curl -fsS http://127.0.0.1:8090/actuator/health
-curl -fsS http://127.0.0.1:8091/actuator/health
-curl -fsS http://127.0.0.1:8092/actuator/health
-curl -fsS http://127.0.0.1:8090/.well-known/jwks.json
+k3s kubectl -n auth-gateway get pods -o wide
+k3s kubectl -n auth-gateway get svc,endpoints
+curl -fsS http://127.0.0.1:31091/actuator/health
+curl -fsS http://127.0.0.1:31091/.well-known/jwks.json
 ```
 
 From public network:
 
 ```bash
-curl -fsS https://auth.careermate.cn/actuator/health
-curl -fsS https://auth.careermate.cn/.well-known/jwks.json
+curl -fsS http://auth.careermate.cn/actuator/health
+curl -fsS http://auth.careermate.cn/.well-known/jwks.json
 ```
 
 Protocol smoke scripts:
@@ -273,5 +258,5 @@ Protocol smoke scripts:
 - `/opt/auth-gateway/keys/auth-active.pem` exists and is readable by container UID/GID `10001:10001` (mode `640`).
 - `/opt/auth-gateway/docker-compose.yml` exists.
 - GitHub Actions secrets are configured.
-- Nginx routes `auth.careermate.cn` to Server 3 replicas.
+- Nginx routes `auth.careermate.cn` to `172.25.90.184:31091`.
 - Public `/.well-known/jwks.json` returns `keys`.
