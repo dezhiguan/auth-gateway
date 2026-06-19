@@ -127,6 +127,35 @@ public class TokenIssuer {
         return jwtSigner.sign(claims);
     }
 
+    public String issueDelegationToken(
+            long delegatedUserId,
+            String consentId,
+            OAuthClient client,
+            String requestedAudience,
+            Set<String> scopes,
+            List<Long> allowedKbIds,
+            long sessionVersion) {
+        Instant now = Instant.now();
+        Instant expiresAt = now.plusSeconds(properties.getExchangeTokenTtlSeconds());
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                .issuer(properties.getIssuer())
+                .audience(requestedAudience)
+                .subject("agent:" + client.clientId() + ":user:" + delegatedUserId)
+                .issueTime(Date.from(now))
+                .expirationTime(Date.from(expiresAt))
+                .jwtID("jti_" + UUID.randomUUID())
+                .claim("principal_type", "agent")
+                .claim("client_id", client.clientId())
+                .claim("delegated_user_id", delegatedUserId)
+                .claim("consent_id", consentId)
+                .claim("tenant_id", "tn_01J_PERSONAL")
+                .claim("allowed_kb_ids", allowedKbIds)
+                .claim("scopes", List.copyOf(scopes))
+                .claim("session_version", sessionVersion)
+                .build();
+        return jwtSigner.sign(claims);
+    }
+
     private void storeRefreshToken(String refreshToken, String familyId, String sessionId, Instant refreshExpiresAt) {
         jdbcTemplate.update("""
                         INSERT INTO refresh_tokens(token_hash, family_id, session_id, expires_at)
