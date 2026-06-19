@@ -241,13 +241,23 @@ jobs:
       - deploy-server3
     steps:
       - name: Health check
+        env:
+          AUTH_GATEWAY_BASE_URL: ${{ vars.AUTH_GATEWAY_BASE_URL }}
+          AUTH_GATEWAY_HOST_HEADER: ${{ vars.AUTH_GATEWAY_HOST_HEADER || 'auth.careermate.cn' }}
+          INGRESS_HOST: ${{ secrets.CAREERMATE_INGRESS_HOST }}
         run: |
-          BASE="${{ vars.AUTH_GATEWAY_BASE_URL || 'http://auth.careermate.cn' }}"
+          BASE="${AUTH_GATEWAY_BASE_URL:-http://${INGRESS_HOST:-8.163.63.222}}"
           curl --fail --silent --show-error --max-time 10 --retry 6 --retry-delay 5 \
+            -H "Host: ${AUTH_GATEWAY_HOST_HEADER}" \
             "${BASE}/actuator/health" | grep -q '"status":"UP"'
 
       - name: JWKS check
+        env:
+          AUTH_GATEWAY_BASE_URL: ${{ vars.AUTH_GATEWAY_BASE_URL }}
+          AUTH_GATEWAY_HOST_HEADER: ${{ vars.AUTH_GATEWAY_HOST_HEADER || 'auth.careermate.cn' }}
+          INGRESS_HOST: ${{ secrets.CAREERMATE_INGRESS_HOST }}
         run: |
-          BASE="${{ vars.AUTH_GATEWAY_BASE_URL || 'http://auth.careermate.cn' }}"
+          BASE="${AUTH_GATEWAY_BASE_URL:-http://${INGRESS_HOST:-8.163.63.222}}"
           curl --fail --silent --show-error --max-time 10 --retry 6 --retry-delay 5 \
+            -H "Host: ${AUTH_GATEWAY_HOST_HEADER}" \
             "${BASE}/.well-known/jwks.json" | grep -q '"keys"'
