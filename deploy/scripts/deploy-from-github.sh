@@ -123,12 +123,43 @@ echo "[4/8] Switch current symlink"
 ln -sfn "${RELEASE_DIR}" "${CURRENT_LINK}"
 
 echo "[5/8] Build Docker image ${IMAGE}"
-docker build --build-arg JAR_FILE=app.jar -t "${IMAGE}" -t auth-gateway:latest "${CURRENT_LINK}"
+JAR_SHA="$(sha256sum "${RELEASE_DIR}/app.jar" | awk '{print $1}' | head -c 16)"
+CACHE_TAG="auth-gateway:jar-${JAR_SHA}"
+echo "  jar sha=${JAR_SHA} (cache tag: ${CACHE_TAG})"
+DOCKER_CACHE_HIT=0
+if docker image inspect "${CACHE_TAG}" >/dev/null 2>&1; then
+  echo "  cache hit (docker): retag without rebuild"
+  docker tag "${CACHE_TAG}" "${IMAGE}"
+  docker tag "${CACHE_TAG}" auth-gateway:latest
+  DOCKER_CACHE_HIT=1
+else
+  echo "  cache miss: building image"
+  docker build --build-arg JAR_FILE=app.jar \
+    -t "${IMAGE}" -t auth-gateway:latest -t "${CACHE_TAG}" \
+    "${CURRENT_LINK}"
+fi
 
 echo "[6/8] Import image into k3s containerd"
-docker save -o "${IMAGE_TAR}" "${IMAGE}" auth-gateway:latest
-k3s ctr -n k8s.io images import "${IMAGE_TAR}"
-rm -f "${IMAGE_TAR}"
+CTR_CACHE_HIT=0
+if [[ "${DOCKER_CACHE_HIT}" == "1" ]] \
+   && k3s ctr -n k8s.io images ls 2>/dev/null | grep -F -q "${CACHE_TAG}"; then
+  echo "  cache hit (containerd): tagging in-place (no save/import)"
+  if k3s ctr -n k8s.io images tag --force \
+        "docker.io/library/${CACHE_TAG}" \
+        "docker.io/library/${IMAGE}" >/dev/null 2>&1 \
+     && k3s ctr -n k8s.io images tag --force \
+        "docker.io/library/${CACHE_TAG}" \
+        "docker.io/library/auth-gateway:latest" >/dev/null 2>&1; then
+    CTR_CACHE_HIT=1
+  else
+    echo "  ctr tag failed, falling back to save+import"
+  fi
+fi
+if [[ "${CTR_CACHE_HIT}" != "1" ]]; then
+  docker save -o "${IMAGE_TAR}" "${IMAGE}" auth-gateway:latest "${CACHE_TAG}"
+  k3s ctr -n k8s.io images import "${IMAGE_TAR}"
+  rm -f "${IMAGE_TAR}"
+fi
 
 echo "[7/8] Create/update Kubernetes Secret and apply manifests"
 bash /opt/auth-gateway/scripts/create-auth-gateway-k8s-secret.sh

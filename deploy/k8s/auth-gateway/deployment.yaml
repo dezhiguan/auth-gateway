@@ -6,14 +6,15 @@ metadata:
   labels:
     app: auth-gateway
 spec:
-  replicas: 3
+  # 单节点 k3s：2 副本即可（3 副本无 HA 价值，仅增加滚动耗时）。
+  replicas: 2
   revisionHistoryLimit: 5
   minReadySeconds: 5
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
-      maxUnavailable: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: auth-gateway
@@ -51,7 +52,8 @@ spec:
               port: http
             periodSeconds: 10
             timeoutSeconds: 5
-            failureThreshold: 36
+            # 最坏等 180s = 3min（原 36 给了 6min，偶发慢启动会卡满）。
+            failureThreshold: 18
           readinessProbe:
             httpGet:
               path: /actuator/health
