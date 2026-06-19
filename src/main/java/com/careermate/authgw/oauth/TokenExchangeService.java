@@ -112,9 +112,7 @@ public class TokenExchangeService {
         } catch (Exception ignored) {
             // Invalid or absent scopes are treated as empty.
         }
-        if ("ADMIN".equalsIgnoreCase(String.valueOf(claims.getClaim("platform_role")))) {
-            scopes.add("rag:search");
-        }
+        // Scopes must be explicitly issued in the subject token; never infer scopes from roles.
         return scopes;
     }
 

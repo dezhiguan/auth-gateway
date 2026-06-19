@@ -4,13 +4,11 @@ import com.careermate.authgw.auth.AuthException;
 import com.careermate.authgw.auth.AuthProperties;
 import com.careermate.authgw.auth.OAuthClient;
 import com.careermate.authgw.auth.OAuthClientRepository;
-import com.careermate.authgw.crypto.JwksProvider;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.proc.BadJOSEException;
 import com.nimbusds.jose.proc.JWSKeySelector;
 import com.nimbusds.jose.proc.JWSVerificationKeySelector;
 import com.nimbusds.jose.proc.SecurityContext;
-import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.jwk.source.RemoteJWKSet;
 import com.nimbusds.jwt.JWTClaimsSet;
@@ -19,6 +17,7 @@ import com.nimbusds.jwt.proc.DefaultJWTProcessor;
 import java.net.URL;
 import java.time.Instant;
 import java.util.Date;
+import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -31,17 +30,17 @@ public class ClientAuthenticator {
     private final OAuthClientRepository clientRepository;
     private final JdbcTemplate jdbcTemplate;
     private final AuthProperties properties;
-    private final JwksProvider jwksProvider;
+    private final Optional<DevLocalJwksAssertionSource> devLocalJwksAssertionSource;
 
     public ClientAuthenticator(
             OAuthClientRepository clientRepository,
             JdbcTemplate jdbcTemplate,
             AuthProperties properties,
-            JwksProvider jwksProvider) {
+            Optional<DevLocalJwksAssertionSource> devLocalJwksAssertionSource) {
         this.clientRepository = clientRepository;
         this.jdbcTemplate = jdbcTemplate;
         this.properties = properties;
-        this.jwksProvider = jwksProvider;
+        this.devLocalJwksAssertionSource = devLocalJwksAssertionSource;
     }
 
     public OAuthClient authenticate(String clientId, String assertionType, String assertion) {
@@ -76,8 +75,8 @@ public class ClientAuthenticator {
     }
 
     private JWKSource<SecurityContext> resolveJwkSource(OAuthClient client) throws Exception {
-        if (properties.getDev().isAllowLocalJwksClientAssertions()) {
-            return new ImmutableJWKSet<>(jwksProvider.publicJwkSet());
+        if (properties.getDev().isAllowLocalJwksClientAssertions() && devLocalJwksAssertionSource.isPresent()) {
+            return devLocalJwksAssertionSource.get().jwkSource();
         }
         if (!StringUtils.hasText(client.jwksUri())) {
             throw new AuthException(401, "CLIENT_JWKS_MISSING", "client jwks_uri is missing");

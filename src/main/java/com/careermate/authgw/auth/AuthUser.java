@@ -6,6 +6,7 @@ public record AuthUser(
         String emailHash,
         String username,
         String passwordHash,
+        String tenantId,
         String platformRole,
         long sessionVersion,
         String status) {
