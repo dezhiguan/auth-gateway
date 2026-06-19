@@ -1,5 +1,6 @@
 package com.careermate.authgw.oauth;
 
+import com.careermate.authgw.audit.AuditLogService;
 import com.careermate.authgw.auth.AccessTokenVerifier;
 import com.careermate.authgw.auth.AuthException;
 import com.careermate.authgw.auth.AuthProperties;
@@ -8,6 +9,7 @@ import com.careermate.authgw.auth.TokenIssuer;
 import com.careermate.authgw.auth.TokenStatusService;
 import com.nimbusds.jwt.JWTClaimsSet;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -23,16 +25,19 @@ public class TokenExchangeService {
     private final TokenStatusService tokenStatusService;
     private final TokenIssuer tokenIssuer;
     private final AuthProperties authProperties;
+    private final AuditLogService auditLogService;
 
     public TokenExchangeService(
             AccessTokenVerifier accessTokenVerifier,
             TokenStatusService tokenStatusService,
             TokenIssuer tokenIssuer,
-            AuthProperties authProperties) {
+            AuthProperties authProperties,
+            AuditLogService auditLogService) {
         this.accessTokenVerifier = accessTokenVerifier;
         this.tokenStatusService = tokenStatusService;
         this.tokenIssuer = tokenIssuer;
         this.authProperties = authProperties;
+        this.auditLogService = auditLogService;
     }
 
     public TokenExchangeResult exchange(
@@ -68,6 +73,10 @@ public class TokenExchangeService {
         }
 
         String accessToken = tokenIssuer.issueExchangedToken(subjectClaims, client, requestedAudience, scopes);
+        auditLogService.info("token_exchange.success", userId(subjectClaims), client.clientId(), Map.of(
+                "requested_audience", requestedAudience,
+                "requested_scopes", String.join(" ", scopes),
+                "subject_token", subjectToken));
         return new TokenExchangeResult(
                 accessToken,
                 EXCHANGED_TOKEN_TYPE,
@@ -107,6 +116,14 @@ public class TokenExchangeService {
             scopes.add("rag:search");
         }
         return scopes;
+    }
+
+    private Long userId(JWTClaimsSet claims) {
+        Object value = claims.getClaim("user_id");
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        return value == null ? null : Long.parseLong(String.valueOf(value));
     }
 
     public record TokenExchangeResult(

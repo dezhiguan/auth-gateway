@@ -1,5 +1,6 @@
 package com.careermate.authgw.oauth;
 
+import com.careermate.authgw.audit.AuditLogService;
 import com.careermate.authgw.auth.AuthException;
 import com.careermate.authgw.auth.AuthUser;
 import com.careermate.authgw.auth.AuthUserRepository;
@@ -40,6 +41,7 @@ public class ConsentService {
     private final AuthUserRepository userRepository;
     private final TokenIssuer tokenIssuer;
     private final EventPublisher eventPublisher;
+    private final AuditLogService auditLogService;
 
     public ConsentService(
             JdbcTemplate jdbcTemplate,
@@ -47,13 +49,15 @@ public class ConsentService {
             OAuthClientRepository clientRepository,
             AuthUserRepository userRepository,
             TokenIssuer tokenIssuer,
-            EventPublisher eventPublisher) {
+            EventPublisher eventPublisher,
+            AuditLogService auditLogService) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
         this.clientRepository = clientRepository;
         this.userRepository = userRepository;
         this.tokenIssuer = tokenIssuer;
         this.eventPublisher = eventPublisher;
+        this.auditLogService = auditLogService;
     }
 
     @Transactional
@@ -104,6 +108,7 @@ public class ConsentService {
             throw new AuthException(404, "CONSENT_NOT_FOUND", "consent not found");
         }
         eventPublisher.publish("consent.revoked", Map.of("consent_id", consentId, "user_id", userId));
+        auditLogService.high("consent.revoke", userId, null, Map.of("consent_id", consentId));
     }
 
     @Transactional(readOnly = true)

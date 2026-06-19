@@ -1,5 +1,6 @@
 package com.careermate.authgw.auth;
 
+import com.careermate.authgw.audit.AuditLogService;
 import com.careermate.authgw.sms.SmsCodeStore;
 import com.careermate.authgw.sms.PhoneSupport;
 import com.careermate.authgw.sms.SmsProperties;
@@ -20,6 +21,7 @@ public class LoginService {
     private final SmsCodeStore bucketStore;
     private final SmsProperties smsProperties;
     private final JdbcTemplate jdbcTemplate;
+    private final AuditLogService auditLogService;
 
     public LoginService(
             AuthUserRepository userRepository,
@@ -27,13 +29,15 @@ public class LoginService {
             TokenIssuer tokenIssuer,
             SmsCodeStore bucketStore,
             SmsProperties smsProperties,
-            JdbcTemplate jdbcTemplate) {
+            JdbcTemplate jdbcTemplate,
+            AuditLogService auditLogService) {
         this.userRepository = userRepository;
         this.passwordHasher = passwordHasher;
         this.tokenIssuer = tokenIssuer;
         this.bucketStore = bucketStore;
         this.smsProperties = smsProperties;
         this.jdbcTemplate = jdbcTemplate;
+        this.auditLogService = auditLogService;
     }
 
     public TokenPair loginPassword(String account, String password, String targetAud, OAuthClient client) {
@@ -52,6 +56,7 @@ public class LoginService {
         if ("ragforge-admin-api".equals(targetAud) && !"ADMIN".equalsIgnoreCase(user.platformRole())) {
             throw new AuthException(403, "PLATFORM_ROLE_DENIED", "platform role denied");
         }
+        auditLogService.info("login.password.success", user.id(), client.clientId(), java.util.Map.of("target_aud", targetAud));
         return tokenIssuer.issueUserTokens(user, client, targetAud);
     }
 
@@ -89,6 +94,7 @@ public class LoginService {
         if ("ragforge-admin-api".equals(targetAud) && !"ADMIN".equalsIgnoreCase(user.platformRole())) {
             throw new AuthException(403, "PLATFORM_ROLE_DENIED", "platform role denied");
         }
+        auditLogService.info("login.mobile.success", user.id(), client.clientId(), java.util.Map.of("target_aud", targetAud, "phone", phone));
         return tokenIssuer.issueUserTokens(user, client, targetAud);
     }
 
@@ -96,8 +102,10 @@ public class LoginService {
         long count = bucketStore.increment(key, FAIL_WINDOW);
         if (count >= 5) {
             bucketStore.setValue(lockKey(account), "1", LOCK_WINDOW);
+            auditLogService.high("login.password.locked", null, null, java.util.Map.of("account", account));
             return new AuthException(423, "CAPTCHA_REQUIRED", "captcha required");
         }
+        auditLogService.info("login.password.failed", null, null, java.util.Map.of("account", account, "failure_count", count));
         return new AuthException(401, "BAD_CREDENTIALS", "bad credentials");
     }
 

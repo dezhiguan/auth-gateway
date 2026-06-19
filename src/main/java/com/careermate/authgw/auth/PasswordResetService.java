@@ -1,5 +1,6 @@
 package com.careermate.authgw.auth;
 
+import com.careermate.authgw.audit.AuditLogService;
 import com.careermate.authgw.crypto.JwtSigner;
 import com.careermate.authgw.crypto.JwksProvider;
 import com.careermate.authgw.events.EventPublisher;
@@ -45,6 +46,7 @@ public class PasswordResetService {
     private final SmsCodeStore codeStore;
     private final AuthProperties authProperties;
     private final EventPublisher eventPublisher;
+    private final AuditLogService auditLogService;
 
     public PasswordResetService(
             AuthUserRepository userRepository,
@@ -56,7 +58,8 @@ public class PasswordResetService {
             SmsProperties smsProperties,
             SmsCodeStore codeStore,
             AuthProperties authProperties,
-            EventPublisher eventPublisher) {
+            EventPublisher eventPublisher,
+            AuditLogService auditLogService) {
         this.userRepository = userRepository;
         this.passwordHasher = passwordHasher;
         this.tokenIssuer = tokenIssuer;
@@ -67,6 +70,7 @@ public class PasswordResetService {
         this.codeStore = codeStore;
         this.authProperties = authProperties;
         this.eventPublisher = eventPublisher;
+        this.auditLogService = auditLogService;
     }
 
     public ResetInitResult init(String account) {
@@ -144,6 +148,7 @@ public class PasswordResetService {
                 userId);
         codeStore.delete(confirmFailKey(userId));
         eventPublisher.publish("user.password.changed", Map.of("user_id", userId));
+        auditLogService.high("user.password.changed", userId, client.clientId(), Map.of("reset_ticket", resetTicket));
 
         AuthUser user = userRepository.findById(userId)
                 .orElseThrow(() -> new AuthException(401, "USER_NOT_FOUND", "user not found"));

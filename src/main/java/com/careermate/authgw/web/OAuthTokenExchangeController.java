@@ -1,5 +1,6 @@
 package com.careermate.authgw.web;
 
+import com.careermate.authgw.audit.AuditLogService;
 import com.careermate.authgw.auth.AuthException;
 import com.careermate.authgw.auth.OAuthClient;
 import com.careermate.authgw.oauth.ClientAuthenticator;
@@ -19,10 +20,15 @@ public class OAuthTokenExchangeController {
 
     private final ClientAuthenticator clientAuthenticator;
     private final TokenExchangeService tokenExchangeService;
+    private final AuditLogService auditLogService;
 
-    public OAuthTokenExchangeController(ClientAuthenticator clientAuthenticator, TokenExchangeService tokenExchangeService) {
+    public OAuthTokenExchangeController(
+            ClientAuthenticator clientAuthenticator,
+            TokenExchangeService tokenExchangeService,
+            AuditLogService auditLogService) {
         this.clientAuthenticator = clientAuthenticator;
         this.tokenExchangeService = tokenExchangeService;
+        this.auditLogService = auditLogService;
     }
 
     @PostMapping(value = "/oauth/token-exchange", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
@@ -35,7 +41,15 @@ public class OAuthTokenExchangeController {
             @RequestParam(name = "client_id", required = false) String clientId,
             @RequestParam(name = "client_assertion_type", required = false) String clientAssertionType,
             @RequestParam(name = "client_assertion", required = false) String clientAssertion) {
-        OAuthClient client = clientAuthenticator.authenticate(clientId, clientAssertionType, clientAssertion);
+        OAuthClient client;
+        try {
+            client = clientAuthenticator.authenticate(clientId, clientAssertionType, clientAssertion);
+        } catch (AuthException ex) {
+            auditLogService.high("token_exchange.client_auth_failed", null, clientId, Map.of(
+                    "client_assertion", clientAssertion == null ? "" : clientAssertion,
+                    "error", ex.code()));
+            throw ex;
+        }
         TokenExchangeService.TokenExchangeResult result = tokenExchangeService.exchange(
                 client, grantType, subjectToken, subjectTokenType, requestedAudience, requestedScopes);
         return new TokenExchangeResponse(
