@@ -240,24 +240,65 @@ jobs:
     needs:
       - deploy-server3
     steps:
-      - name: Health check
+      - name: Configure SSH (Server 3)
         env:
-          AUTH_GATEWAY_BASE_URL: ${{ vars.AUTH_GATEWAY_BASE_URL }}
-          AUTH_GATEWAY_HOST_HEADER: ${{ vars.AUTH_GATEWAY_HOST_HEADER || 'auth.careermate.cn' }}
-          INGRESS_HOST: ${{ secrets.CAREERMATE_INGRESS_HOST }}
+          SSH_KEY: ${{ secrets.AUTH_GATEWAY_APP_SSH_KEY || secrets.CAREERMATE_APP_SSH_KEY || secrets.RAGFORGE_APP_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.AUTH_GATEWAY_APP_HOST }}
+          DEPLOY_USER: ${{ secrets.AUTH_GATEWAY_APP_USER }}
+          DEPLOY_PORT: ${{ secrets.AUTH_GATEWAY_APP_PORT }}
+          JUMP_HOST: ${{ secrets.CAREERMATE_INGRESS_HOST }}
+          JUMP_USER: ${{ secrets.CAREERMATE_INGRESS_USER }}
+          JUMP_PORT: ${{ secrets.CAREERMATE_INGRESS_PORT }}
         run: |
-          BASE="${AUTH_GATEWAY_BASE_URL:-http://${INGRESS_HOST:-8.163.63.222}}"
-          curl --fail --silent --show-error --max-time 10 --retry 6 --retry-delay 5 \
-            -H "Host: ${AUTH_GATEWAY_HOST_HEADER}" \
-            "${BASE}/actuator/health" | grep -q '"status":"UP"'
+          if [[ -z "${SSH_KEY}" || -z "${DEPLOY_HOST}" ]]; then
+            echo "AUTH_GATEWAY_APP_SSH_KEY and AUTH_GATEWAY_APP_HOST must be set"
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "${SSH_KEY}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          DEPLOY_USER="${DEPLOY_USER:-root}"
+          PORT="${DEPLOY_PORT:-22}"
+          JUMP_HOST="${JUMP_HOST:-8.163.63.222}"
+          JUMP_USER="${JUMP_USER:-root}"
+          JUMP_PORT="${JUMP_PORT:-22}"
+          ssh-keyscan -p "${JUMP_PORT}" "${JUMP_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          {
+            printf '%s\n' 'Host auth-gateway-jump'
+            printf '%s\n' "  HostName ${JUMP_HOST}"
+            printf '%s\n' "  User ${JUMP_USER}"
+            printf '%s\n' "  Port ${JUMP_PORT}"
+            printf '%s\n' '  IdentityFile ~/.ssh/deploy_key'
+            printf '%s\n' '  IdentitiesOnly yes'
+            printf '%s\n' '  StrictHostKeyChecking accept-new'
+            printf '%s\n' '  BatchMode yes'
+            printf '%s\n' '  ConnectTimeout 15'
+            printf '%s\n' ''
+            printf '%s\n' 'Host auth-gateway-app'
+            printf '%s\n' "  HostName ${DEPLOY_HOST}"
+            printf '%s\n' "  User ${DEPLOY_USER}"
+            printf '%s\n' "  Port ${PORT}"
+            printf '%s\n' '  IdentityFile ~/.ssh/deploy_key'
+            printf '%s\n' '  IdentitiesOnly yes'
+            printf '%s\n' '  StrictHostKeyChecking accept-new'
+            printf '%s\n' '  BatchMode yes'
+            printf '%s\n' '  ConnectTimeout 15'
+            printf '%s\n' '  ServerAliveInterval 30'
+            printf '%s\n' '  ServerAliveCountMax 3'
+            printf '%s\n' '  ProxyJump auth-gateway-jump'
+          } > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+      - name: Health check
+        run: |
+          SSH_OPTS=(-T -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
+          ssh "${SSH_OPTS[@]}" auth-gateway-app \
+            "curl --fail --silent --show-error --max-time 10 --retry 6 --retry-delay 5 http://127.0.0.1:31091/actuator/health" \
+            | grep -q '"status":"UP"'
 
       - name: JWKS check
-        env:
-          AUTH_GATEWAY_BASE_URL: ${{ vars.AUTH_GATEWAY_BASE_URL }}
-          AUTH_GATEWAY_HOST_HEADER: ${{ vars.AUTH_GATEWAY_HOST_HEADER || 'auth.careermate.cn' }}
-          INGRESS_HOST: ${{ secrets.CAREERMATE_INGRESS_HOST }}
         run: |
-          BASE="${AUTH_GATEWAY_BASE_URL:-http://${INGRESS_HOST:-8.163.63.222}}"
-          curl --fail --silent --show-error --max-time 10 --retry 6 --retry-delay 5 \
-            -H "Host: ${AUTH_GATEWAY_HOST_HEADER}" \
-            "${BASE}/.well-known/jwks.json" | grep -q '"keys"'
+          SSH_OPTS=(-T -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
+          ssh "${SSH_OPTS[@]}" auth-gateway-app \
+            "curl --fail --silent --show-error --max-time 10 --retry 6 --retry-delay 5 http://127.0.0.1:31091/.well-known/jwks.json" \
+            | grep -q '"keys"'
