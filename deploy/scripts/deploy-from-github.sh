@@ -12,9 +12,12 @@ RELEASE_SHA="${1}"
 SHORT_SHA="${RELEASE_SHA:0:12}"
 RELEASE_DIR="/opt/auth-gateway/releases/${RELEASE_SHA}"
 CURRENT_LINK="/opt/auth-gateway/current"
-HEALTH_PORTS=(8090 8091 8092)
-COMPOSE_FILE="/opt/auth-gateway/docker-compose.yml"
-IMAGE_NAME="auth-gateway:latest"
+K8S_DIR="/opt/auth-gateway/deploy/k8s/auth-gateway"
+NAMESPACE="${AUTH_GATEWAY_K8S_NAMESPACE:-auth-gateway}"
+DEPLOYMENT="auth-gateway"
+IMAGE="auth-gateway:${SHORT_SHA}"
+IMAGE_TAR="/tmp/auth-gateway-${SHORT_SHA}.tar"
+NODEPORT="${AUTH_GATEWAY_NODEPORT:-31091}"
 APP_UID="${AUTH_GATEWAY_APP_UID:-10001}"
 APP_GID="${AUTH_GATEWAY_APP_GID:-10001}"
 
@@ -107,40 +110,38 @@ if ! command -v k3s >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "[1.5/6] Ensure container-readable key and log permissions"
+echo "[2/8] Ensure container-readable key and log permissions"
 mkdir -p /opt/auth-gateway/logs
 chown -R "${APP_UID}:${APP_GID}" /opt/auth-gateway/keys /opt/auth-gateway/logs
 chmod 750 /opt/auth-gateway/keys
 find /opt/auth-gateway/keys -type f -name '*.pem' -exec chmod 640 {} \;
 chmod 750 /opt/auth-gateway/logs
 
-echo "[2/6] Previous release: ${PREVIOUS_RELEASE:-<none>}"
+echo "[3/8] Previous release: ${PREVIOUS_RELEASE:-<none>}"
 
-echo "[3/6] Switch current symlink"
+echo "[4/8] Switch current symlink"
 ln -sfn "${RELEASE_DIR}" "${CURRENT_LINK}"
 
-echo "[3/8] Build Docker image ${IMAGE}"
+echo "[5/8] Build Docker image ${IMAGE}"
 docker build --build-arg JAR_FILE=app.jar -t "${IMAGE}" -t auth-gateway:latest "${CURRENT_LINK}"
 
-echo "[4/8] Import image into k3s containerd"
-docker save "${IMAGE}" auth-gateway:latest -o "${IMAGE_TAR}"
+echo "[6/8] Import image into k3s containerd"
+docker save -o "${IMAGE_TAR}" "${IMAGE}" auth-gateway:latest
 k3s ctr -n k8s.io images import "${IMAGE_TAR}"
 rm -f "${IMAGE_TAR}"
 
-echo "[5/8] Create/update Kubernetes Secret"
+echo "[7/8] Create/update Kubernetes Secret and apply manifests"
 bash /opt/auth-gateway/scripts/create-auth-gateway-k8s-secret.sh
 
-echo "[6/8] Apply manifests"
 wait_for_node_ready 24
 k3s kubectl apply -f "${K8S_DIR}/namespace.yaml"
 k3s kubectl apply -f "${K8S_DIR}/service.yaml"
 k3s kubectl apply -f "${K8S_DIR}/deployment.yaml"
 k3s kubectl -n "${NAMESPACE}" set image "deployment/${DEPLOYMENT}" "auth-gateway=${IMAGE}"
 
-echo "[7/8] Wait for rollout"
+echo "[8/8] Wait for rollout and verify NodePort health"
 wait_for_rollout
 
-echo "[8/8] Verify NodePort health"
 wait_for_nodeport_health
 k3s kubectl -n "${NAMESPACE}" get pods -o wide
 k3s kubectl -n "${NAMESPACE}" get svc,endpoints

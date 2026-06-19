@@ -56,7 +56,7 @@ ln -sfn "${RELEASE_DIR}" "${CURRENT_LINK}"
 
 echo "[3/5] Build and import image ${IMAGE}"
 docker build --build-arg JAR_FILE=app.jar -t "${IMAGE}" -t auth-gateway:latest "${CURRENT_LINK}"
-docker save "${IMAGE}" auth-gateway:latest -o "${IMAGE_TAR}"
+docker save -o "${IMAGE_TAR}" "${IMAGE}" auth-gateway:latest
 k3s ctr -n k8s.io images import "${IMAGE_TAR}"
 rm -f "${IMAGE_TAR}"
 
