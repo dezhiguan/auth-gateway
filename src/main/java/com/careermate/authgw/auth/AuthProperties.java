@@ -9,6 +9,7 @@ public class AuthProperties {
     private String tokenEndpointAudience = "https://auth.careermate.cn/oauth/token";
     private long accessTokenTtlSeconds = 900;
     private long refreshTokenTtlSeconds = 604800;
+    private long exchangeTokenTtlSeconds = 600;
     private Dev dev = new Dev();
 
     public String getIssuer() {
@@ -41,6 +42,14 @@ public class AuthProperties {
 
     public void setRefreshTokenTtlSeconds(long refreshTokenTtlSeconds) {
         this.refreshTokenTtlSeconds = refreshTokenTtlSeconds;
+    }
+
+    public long getExchangeTokenTtlSeconds() {
+        return exchangeTokenTtlSeconds;
+    }
+
+    public void setExchangeTokenTtlSeconds(long exchangeTokenTtlSeconds) {
+        this.exchangeTokenTtlSeconds = exchangeTokenTtlSeconds;
     }
 
     public Dev getDev() {

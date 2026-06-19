@@ -5,6 +5,7 @@ import com.nimbusds.jwt.JWTClaimsSet;
 import java.time.Instant;
 import java.util.Date;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -98,6 +99,32 @@ public class TokenIssuer {
                 .build();
 
         return new TokenPair(jwtSigner.sign(claims), refreshToken, "Bearer", properties.getAccessTokenTtlSeconds());
+    }
+
+    public String issueExchangedToken(JWTClaimsSet subjectClaims, OAuthClient client, String requestedAudience, Set<String> requestedScopes) {
+        Instant now = Instant.now();
+        Instant expiresAt = now.plusSeconds(properties.getExchangeTokenTtlSeconds());
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                .issuer(properties.getIssuer())
+                .audience(requestedAudience)
+                .subject(subjectClaims.getSubject())
+                .issueTime(Date.from(now))
+                .expirationTime(Date.from(expiresAt))
+                .jwtID("jti_" + UUID.randomUUID())
+                .claim("principal_type", subjectClaims.getClaim("principal_type"))
+                .claim("user_id", subjectClaims.getClaim("user_id"))
+                .claim("tenant_id", subjectClaims.getClaim("tenant_id"))
+                .claim("platform_role", subjectClaims.getClaim("platform_role"))
+                .claim("rag_role", subjectClaims.getClaim("rag_role"))
+                .claim("rag_readable_kb_ids", subjectClaims.getClaim("rag_readable_kb_ids"))
+                .claim("rag_writable_kb_ids", subjectClaims.getClaim("rag_writable_kb_ids"))
+                .claim("scopes", List.copyOf(requestedScopes))
+                .claim("session_id", subjectClaims.getClaim("session_id"))
+                .claim("session_version", subjectClaims.getClaim("session_version"))
+                .claim("azp", client.clientId())
+                .claim("act", client.clientId())
+                .build();
+        return jwtSigner.sign(claims);
     }
 
     private void storeRefreshToken(String refreshToken, String familyId, String sessionId, Instant refreshExpiresAt) {

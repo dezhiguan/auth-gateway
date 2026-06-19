@@ -36,6 +36,7 @@ auth:
   token-endpoint-audience: ${AUTH_TOKEN_ENDPOINT_AUDIENCE:https://auth.careermate.cn/oauth/token}
   access-token-ttl-seconds: 900
   refresh-token-ttl-seconds: 604800
+  exchange-token-ttl-seconds: 600
   sms:
     storage: memory
     phone-hash-pepper: ${AUTH_SMS_PHONE_HASH_PEPPER:auth-gateway-dev-pepper}

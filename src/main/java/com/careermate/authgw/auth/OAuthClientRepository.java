@@ -29,6 +29,7 @@ public class OAuthClientRepository {
                         SELECT client_id, client_name, auth_method, jwks_uri,
                                allowed_grant_types::text AS allowed_grant_types,
                                allowed_audiences::text AS allowed_audiences,
+                               allowed_scopes::text AS allowed_scopes,
                                status
                         FROM oauth_clients
                         WHERE client_id = ?
@@ -47,6 +48,7 @@ public class OAuthClientRepository {
                     rs.getString("jwks_uri"),
                     objectMapper.readValue(rs.getString("allowed_grant_types"), STRING_SET),
                     objectMapper.readValue(rs.getString("allowed_audiences"), STRING_SET),
+                    objectMapper.readValue(rs.getString("allowed_scopes"), STRING_SET),
                     rs.getString("status"));
         } catch (Exception ex) {
             throw new SQLException("Failed to parse oauth client JSON fields", ex);

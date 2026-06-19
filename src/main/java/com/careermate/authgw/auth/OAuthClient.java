@@ -9,5 +9,6 @@ public record OAuthClient(
         String jwksUri,
         Set<String> allowedGrantTypes,
         Set<String> allowedAudiences,
+        Set<String> allowedScopes,
         String status) {
 }
