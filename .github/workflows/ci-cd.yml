@@ -137,9 +137,9 @@ jobs:
           if-no-files-found: ignore
 
   deploy-server3:
-    name: deploy-server3
+    name: deploy-server3-k3s
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     needs:
       - build
@@ -218,16 +218,18 @@ jobs:
             exit 1
           fi
           ssh "${SSH_OPTS[@]}" auth-gateway-app \
-            "sudo mkdir -p /opt/auth-gateway/releases/${RELEASE_SHA} /opt/auth-gateway/scripts && sudo chown -R ${DEPLOY_USER}:${DEPLOY_USER} /opt/auth-gateway/releases/${RELEASE_SHA} /opt/auth-gateway/scripts"
+            "sudo mkdir -p /opt/auth-gateway/releases/${RELEASE_SHA} /opt/auth-gateway/scripts /opt/auth-gateway/deploy/k8s/auth-gateway && sudo chown -R ${DEPLOY_USER}:${DEPLOY_USER} /opt/auth-gateway/releases/${RELEASE_SHA} /opt/auth-gateway/scripts /opt/auth-gateway/deploy"
           scp "${SCP_OPTS[@]}" "${JAR_FILE}" "auth-gateway-app:/opt/auth-gateway/releases/${RELEASE_SHA}/app.jar"
           scp "${SCP_OPTS[@]}" Dockerfile "auth-gateway-app:/opt/auth-gateway/releases/${RELEASE_SHA}/Dockerfile"
-          scp "${SCP_OPTS[@]}" deploy/scripts/deploy-from-github.sh deploy/scripts/rollback-auth-gateway.sh \
+          scp "${SCP_OPTS[@]}" deploy/scripts/deploy-from-github.sh deploy/scripts/rollback-auth-gateway.sh deploy/scripts/create-auth-gateway-k8s-secret.sh \
             "auth-gateway-app:/opt/auth-gateway/scripts/"
+          scp "${SCP_OPTS[@]}" deploy/k8s/auth-gateway/*.yaml \
+            "auth-gateway-app:/opt/auth-gateway/deploy/k8s/auth-gateway/"
 
-      - name: Deploy Auth Gateway on Server 3
+      - name: Deploy Auth Gateway on Server 3 k3s
         run: |
           SSH_OPTS=(-T -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
-          timeout 20m ssh "${SSH_OPTS[@]}" auth-gateway-app \
+          timeout 25m ssh "${SSH_OPTS[@]}" auth-gateway-app \
             "sudo bash /opt/auth-gateway/scripts/deploy-from-github.sh '${GITHUB_SHA}'"
 
   smoke-test:
@@ -240,12 +242,12 @@ jobs:
     steps:
       - name: Health check
         run: |
-          BASE="${{ vars.AUTH_GATEWAY_BASE_URL || 'https://auth.careermate.cn' }}"
+          BASE="${{ vars.AUTH_GATEWAY_BASE_URL || 'http://auth.careermate.cn' }}"
           curl --fail --silent --show-error --max-time 10 --retry 6 --retry-delay 5 \
             "${BASE}/actuator/health" | grep -q '"status":"UP"'
 
       - name: JWKS check
         run: |
-          BASE="${{ vars.AUTH_GATEWAY_BASE_URL || 'https://auth.careermate.cn' }}"
+          BASE="${{ vars.AUTH_GATEWAY_BASE_URL || 'http://auth.careermate.cn' }}"
           curl --fail --silent --show-error --max-time 10 --retry 6 --retry-delay 5 \
             "${BASE}/.well-known/jwks.json" | grep -q '"keys"'
