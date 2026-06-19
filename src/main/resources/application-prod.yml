@@ -11,6 +11,8 @@ jwks:
     previous-private-key: ${JWKS_PREVIOUS_PRIVATE_KEY_PATH:}
 
 auth:
+  dev:
+    allow-local-jwks-client-assertions: false
   sms:
     storage: redis
     phone-hash-pepper: ${AUTH_SMS_PHONE_HASH_PEPPER}

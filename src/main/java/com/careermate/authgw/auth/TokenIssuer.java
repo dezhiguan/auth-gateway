@@ -39,10 +39,10 @@ public class TokenIssuer {
         String refreshToken = "rt_" + UUID.randomUUID() + "." + UUID.randomUUID();
 
         jdbcTemplate.update("""
-                        INSERT INTO auth_sessions(session_id, user_id, device_id, session_version, created_at)
-                        VALUES (?, ?, ?, ?, now())
+                        INSERT INTO auth_sessions(session_id, user_id, device_id, target_audience, session_version, created_at)
+                        VALUES (?, ?, ?, ?, ?, now())
                         """,
-                sessionId, user.id(), targetAud, user.sessionVersion());
+                sessionId, user.id(), null, targetAud, user.sessionVersion());
         storeRefreshToken(refreshToken, familyId, sessionId, refreshExpiresAt);
 
         JWTClaimsSet claims = new JWTClaimsSet.Builder()
@@ -54,7 +54,7 @@ public class TokenIssuer {
                 .jwtID(jti)
                 .claim("principal_type", "user")
                 .claim("user_id", user.id())
-                .claim("tenant_id", "tn_01J_PERSONAL")
+                .claim("tenant_id", user.tenantId())
                 .claim("platform_role", user.platformRole())
                 .claim("rag_role", deriveRagRole(user))
                 .claim("rag_readable_kb_ids", List.of())
@@ -88,7 +88,7 @@ public class TokenIssuer {
                 .jwtID(jti)
                 .claim("principal_type", "user")
                 .claim("user_id", user.id())
-                .claim("tenant_id", "tn_01J_PERSONAL")
+                .claim("tenant_id", user.tenantId())
                 .claim("platform_role", user.platformRole())
                 .claim("rag_role", deriveRagRole(user))
                 .claim("rag_readable_kb_ids", List.of())
@@ -129,6 +129,7 @@ public class TokenIssuer {
 
     public String issueDelegationToken(
             long delegatedUserId,
+            String delegatedTenantId,
             String consentId,
             OAuthClient client,
             String requestedAudience,
@@ -148,7 +149,7 @@ public class TokenIssuer {
                 .claim("client_id", client.clientId())
                 .claim("delegated_user_id", delegatedUserId)
                 .claim("consent_id", consentId)
-                .claim("tenant_id", "tn_01J_PERSONAL")
+                .claim("tenant_id", delegatedTenantId)
                 .claim("allowed_kb_ids", allowedKbIds)
                 .claim("scopes", List.copyOf(scopes))
                 .claim("session_version", sessionVersion)

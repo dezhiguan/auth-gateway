@@ -109,7 +109,7 @@ public class TokenService {
                         SELECT rt.token_hash, rt.family_id, rt.session_id, rt.expires_at,
                                rt.rotated_at, rt.revoked_at,
                                s.user_id, s.session_version, s.revoked_at AS session_revoked_at,
-                               COALESCE(s.device_id, 'ragforge-admin-api') AS audience
+                               s.target_audience AS audience
                         FROM refresh_tokens rt
                         JOIN auth_sessions s ON s.session_id = rt.session_id
                         WHERE rt.token_hash = ?
@@ -124,6 +124,10 @@ public class TokenService {
     }
 
     private RefreshRecord mapRefresh(ResultSet rs) throws SQLException {
+        String audience = rs.getString("audience");
+        if (audience == null) {
+            throw new AuthException(401, "REFRESH_AUDIENCE_MISSING", "refresh session audience is missing");
+        }
         return new RefreshRecord(
                 rs.getString("token_hash"),
                 rs.getString("family_id"),
