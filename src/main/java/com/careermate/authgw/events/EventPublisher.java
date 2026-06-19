@@ -3,7 +3,9 @@ package com.careermate.authgw.events;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -13,10 +15,16 @@ import org.springframework.stereotype.Component;
 public class EventPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(EventPublisher.class);
+    private static final Set<String> KNOWN_EVENT_TYPES = Set.of(
+            "session.revoked",
+            "user.password.changed",
+            "consent.revoked",
+            "refresh.replay_detected");
 
     private final JdbcTemplate jdbcTemplate;
     private final EventOutboxRepository eventOutboxRepository;
     private final EventDelivery eventDelivery;
+    private final Set<String> emptySubscriptionWarnings = ConcurrentHashMap.newKeySet();
 
     public EventPublisher(
             JdbcTemplate jdbcTemplate,
@@ -81,7 +89,7 @@ public class EventPublisher {
     }
 
     private List<Subscription> subscriptionsFor(String eventType) {
-        return jdbcTemplate.query("""
+        List<Subscription> subscriptions = jdbcTemplate.query("""
                         SELECT subscriber, endpoint_url, hmac_secret
                         FROM event_subscriptions
                         WHERE status = 'ACTIVE' AND jsonb_exists(event_types, ?)
@@ -91,6 +99,12 @@ public class EventPublisher {
                         rs.getString("endpoint_url"),
                         rs.getString("hmac_secret")),
                 eventType);
+        if (subscriptions.isEmpty()
+                && KNOWN_EVENT_TYPES.contains(eventType)
+                && emptySubscriptionWarnings.add(eventType)) {
+            log.warn("no active event subscriptions found for known auth event type={}", eventType);
+        }
+        return subscriptions;
     }
 
     private record Subscription(String subscriber, String endpointUrl, String hmacSecret) {

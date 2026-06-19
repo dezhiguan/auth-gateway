@@ -11,6 +11,8 @@ jwks:
     previous-private-key: ${JWKS_PREVIOUS_PRIVATE_KEY_PATH:}
 
 auth:
+  events:
+    dev-allow-empty-secret: false
   dev:
     allow-local-jwks-client-assertions: false
   sms:
