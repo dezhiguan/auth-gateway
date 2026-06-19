@@ -11,6 +11,7 @@ public class AuthProperties {
     private long refreshTokenTtlSeconds = 604800;
     private long exchangeTokenTtlSeconds = 600;
     private Dev dev = new Dev();
+    private Events events = new Events();
 
     public String getIssuer() {
         return issuer;
@@ -60,6 +61,14 @@ public class AuthProperties {
         this.dev = dev;
     }
 
+    public Events getEvents() {
+        return events;
+    }
+
+    public void setEvents(Events events) {
+        this.events = events;
+    }
+
     public static class Dev {
         private boolean allowLocalJwksClientAssertions;
 
@@ -69,6 +78,18 @@ public class AuthProperties {
 
         public void setAllowLocalJwksClientAssertions(boolean allowLocalJwksClientAssertions) {
             this.allowLocalJwksClientAssertions = allowLocalJwksClientAssertions;
+        }
+    }
+
+    public static class Events {
+        private boolean devAllowEmptySecret;
+
+        public boolean isDevAllowEmptySecret() {
+            return devAllowEmptySecret;
+        }
+
+        public void setDevAllowEmptySecret(boolean devAllowEmptySecret) {
+            this.devAllowEmptySecret = devAllowEmptySecret;
         }
     }
 }

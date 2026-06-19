@@ -4,5 +4,7 @@ spring:
       on-profile: dev
 
 auth:
+  events:
+    dev-allow-empty-secret: true
   dev:
     allow-local-jwks-client-assertions: true

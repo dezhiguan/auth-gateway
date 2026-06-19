@@ -29,3 +29,7 @@ Health check:
 ```bash
 curl -s http://localhost:8090/actuator/health | jq .status
 ```
+
+## Event Subscriptions
+
+Before production rollout, replace `event_subscriptions.hmac_secret` with random strings of at least 32 characters that match downstream services (`rag-forge` / `careermate`). Use an SQL `UPDATE` or operations-managed secret injection; empty values and `<TBD...>` placeholders are rejected at startup outside the dev profile.

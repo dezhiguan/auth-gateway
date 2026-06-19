@@ -37,6 +37,8 @@ auth:
   access-token-ttl-seconds: ${AUTH_ACCESS_TOKEN_TTL_SECONDS:900}
   refresh-token-ttl-seconds: ${AUTH_REFRESH_TOKEN_TTL_SECONDS:604800}
   exchange-token-ttl-seconds: ${AUTH_EXCHANGE_TOKEN_TTL_SECONDS:600}
+  events:
+    dev-allow-empty-secret: false
   sms:
     storage: memory
     phone-hash-pepper: ${AUTH_SMS_PHONE_HASH_PEPPER:auth-gateway-dev-pepper}
