@@ -54,7 +54,7 @@ public class LoginService {
             throw new AuthException(423, "CAPTCHA_REQUIRED", "登录失败次数较多，请稍后再试");
         }
 
-        AuthUser user = userRepository.findByAccount(account)
+        AuthUser user = findPasswordLoginUser(account)
                 .orElseThrow(() -> fail(key, account));
         if (!"ACTIVE".equalsIgnoreCase(user.status()) || !passwordHasher.matches(password, user.passwordHash())) {
             throw fail(key, account);
@@ -91,6 +91,20 @@ public class LoginService {
         if ("ragforge-admin-api".equals(targetAud) && !"ADMIN".equalsIgnoreCase(user.platformRole())) {
             throw new AuthException(403, "PLATFORM_ROLE_DENIED", "当前账号没有 RAGForge 管理权限，请联系管理员开通");
         }
+    }
+
+    private java.util.Optional<AuthUser> findPasswordLoginUser(String account) {
+        try {
+            String phone = PhoneSupport.requireMainlandPhone(account);
+            String phoneHash = PhoneSupport.hashPhone(phone, smsProperties.getPhoneHashPepper());
+            java.util.Optional<AuthUser> byPhone = userRepository.findByPhoneHash(phoneHash);
+            if (byPhone.isPresent()) {
+                return byPhone;
+            }
+        } catch (RuntimeException ignored) {
+            // Not a phone login; fall through to username lookup.
+        }
+        return userRepository.findByAccount(account);
     }
 
     private AuthException fail(String key, String account) {
