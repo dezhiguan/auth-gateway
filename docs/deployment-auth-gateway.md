@@ -2,7 +2,7 @@
 
 ## 1. Topology
 
-Auth Gateway runs on Server 3 single-node k3s with CareerMate and RAGForge app services.
+Auth Gateway runs on Server 3 single-node k3s with CareerMate and RAGForge app services. The current application runtime is Java 21 and Spring Boot 3.5.x.
 
 | Layer | Private IP | Services |
 |---|---:|---|
@@ -17,7 +17,7 @@ auth.careermate.cn
   -> Server 2 ragforge-nginx container
   -> Server 3 172.25.90.184:31091
   -> k3s Service auth-gateway
-  -> 3 auth-gateway Pods
+  -> 2 auth-gateway Pods
 ```
 
 ## 2. Repository Artifacts
@@ -57,6 +57,8 @@ AUTH_DB_PASSWORD=<server-local-secret>
 SPRING_DATA_REDIS_HOST=172.25.90.183
 SPRING_DATA_REDIS_PORT=6379
 ```
+
+The application runs Flyway migrations at startup. Keep `deploy/sql/init-authdb.sql.example` focused on database/user bootstrap; schema changes belong in `src/main/resources/db/migration`.
 
 ## 4. Server 3 Prerequisites
 
@@ -101,6 +103,8 @@ Expected layout:
 
 Server 3 must have Docker and k3s installed. The deploy script builds the Docker image on Server 3, imports it into k3s containerd, then rolls the k3s Deployment.
 
+The container image uses `eclipse-temurin:21-jre-jammy` and runs as UID/GID `10001:10001`.
+
 ## 5. Required Production Config
 
 `/opt/shared/env/auth-gateway.env` must include:
@@ -121,6 +125,9 @@ ALIYUN_SMS_ACCESS_KEY_ID=<secret>
 ALIYUN_SMS_ACCESS_KEY_SECRET=<secret>
 ALIYUN_SMS_SIGN_NAME=CareerMate
 ALIYUN_SMS_TEMPLATE_CODE=SMS_XXXXXX
+ALIYUN_SMS_TEMPLATE_VALID_MINUTES=5
+ALIYUN_SMS_REGION=cn-hangzhou
+ALIYUN_SMS_ENDPOINT=dypnsapi.aliyuncs.com
 JAVA_TOOL_OPTIONS="-Xms128m -Xmx256m"
 ```
 
@@ -180,7 +187,7 @@ On push to `main`:
 4. Import the image into k3s containerd.
 5. Create/update `auth-gateway-env` Secret from `/opt/shared/env/common.env` and `/opt/shared/env/auth-gateway.env`.
 6. Apply namespace, service, deployment.
-7. Roll out 3 Pods.
+7. Roll out 2 Pods.
 8. Smoke checks:
    - `/actuator/health`
    - `/.well-known/jwks.json`
@@ -248,15 +255,77 @@ Protocol smoke scripts:
 ./scripts/test-refresh-replay.sh
 ./scripts/e2e-userinfo-introspect.sh
 ./scripts/test-consent-flow.sh
+./scripts/e2e-password-reset.sh
 ```
 
-## 12. Deployment Checklist
+## 12. Runtime API Surface
+
+Main public/internal endpoints:
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /auth/login/password` | Password login, returns access/refresh token pair |
+| `POST /auth/login/mobile` | SMS login, returns access/refresh token pair |
+| `POST /auth/sms/send` | Send SMS verification code |
+| `POST /auth/token/refresh` | Rotate refresh token |
+| `POST /auth/logout` | Revoke current session |
+| `POST /auth/logout-all` | Revoke all user sessions after password check |
+| `POST /auth/password/reset/init` | Start password reset flow |
+| `POST /auth/password/reset/verify` | Verify reset SMS code and return reset ticket |
+| `POST /auth/password/reset/confirm` | Confirm new password and issue tokens |
+| `POST /oauth/token-exchange` | RFC 8693 token exchange |
+| `POST /oauth/consents` | Create agent consent |
+| `GET /oauth/consents` | List current user's consents |
+| `POST /oauth/consents/{id}/revoke` | Revoke consent |
+| `POST /oauth/delegation-token` | Issue agent delegation token from consent |
+| `GET /userinfo` | Return user token metadata |
+| `POST /oauth/introspect` | Token introspection |
+| `GET /.well-known/jwks.json` | Public JWKS |
+| `GET /actuator/health` | Health probe |
+
+Endpoints that accept `client_id` require `private_key_jwt` fields:
+
+```text
+client_id=<oauth client id>
+client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+client_assertion=<RS256 JWT with iss/sub=client_id, aud=AUTH_TOKEN_ENDPOINT_AUDIENCE, unique jti, exp <= 10 minutes>
+```
+
+Seeded OAuth clients:
+
+| Client | Audiences | Scopes |
+|---|---|---|
+| `careermate-backend` | `careermate-api`, `ragforge-admin-api`, `ragforge-api` | `rag:search` |
+| `ragforge-admin-backend` | `ragforge-admin-api` | `rag:admin:read`, `rag:admin:write` |
+
+## 13. Auth Events
+
+Current event types:
+
+```text
+session.revoked
+user.password.changed
+consent.revoked
+refresh.replay_detected
+```
+
+Delivery uses HTTP POST with JSON envelope and HMAC headers:
+
+| Header | Value |
+|---|---|
+| `X-Auth-Event-Signature` | `sha256=<hex hmac over request body>` |
+| `X-Auth-Event-Timestamp` | Unix seconds |
+
+## 14. Deployment Checklist
 
 - Server 1 `authdb` exists and Flyway can migrate.
 - Server 1 Redis is reachable from Server 3.
 - `/opt/shared/env/auth-gateway.env` exists and contains no placeholders.
 - `/opt/auth-gateway/keys/auth-active.pem` exists and is readable by container UID/GID `10001:10001` (mode `640`).
-- `/opt/auth-gateway/docker-compose.yml` exists.
+- `/opt/shared/env/common.env` exists.
+- `/opt/auth-gateway/releases/<git-sha>/app.jar` and `Dockerfile` exist after CI upload.
+- `/opt/auth-gateway/deploy/k8s/auth-gateway/{namespace,deployment,service}.yaml` are present on Server 3.
 - GitHub Actions secrets are configured.
+- Active `event_subscriptions` rows use real HMAC secrets, not empty strings or `<TBD...>` placeholders.
 - Nginx routes `auth.careermate.cn` to `172.25.90.184:31091`.
 - Public `/.well-known/jwks.json` returns `keys`.
