@@ -51,11 +51,14 @@ public class EventPublisher {
             Map<String, Object> payload,
             Subscription subscription) {
         String eventId = UUID.randomUUID().toString();
-        Map<String, Object> envelope = Map.of(
-                "event_id", eventId,
-                "event_type", eventType,
-                "occurred_at", occurredAt.toString(),
-                "payload", payload);
+        Map<String, Object> envelope = Map.ofEntries(
+                Map.entry("event_id", eventId),
+                Map.entry("type", eventType),
+                Map.entry("event_type", eventType),
+                Map.entry("occurred_at", occurredAt.getEpochSecond()),
+                Map.entry("occurred_at_iso", occurredAt.toString()),
+                Map.entry("data", payload),
+                Map.entry("payload", payload));
         eventOutboxRepository.createPending(
                 eventId,
                 eventType,
