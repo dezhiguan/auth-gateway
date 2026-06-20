@@ -6,7 +6,9 @@ import com.careermate.authgw.crypto.JwksProvider;
 import com.careermate.authgw.events.EventPublisher;
 import com.careermate.authgw.sms.MobileSmsAuthProvider;
 import com.careermate.authgw.sms.PhoneSupport;
+import com.careermate.authgw.sms.SmsAuthRateLimiter;
 import com.careermate.authgw.sms.SmsCodeStore;
+import com.careermate.authgw.sms.SmsException;
 import com.careermate.authgw.sms.SmsProperties;
 import com.careermate.authgw.sms.SmsScene;
 import com.nimbusds.jose.JWSAlgorithm;
@@ -45,6 +47,7 @@ public class PasswordResetService {
     private final JdbcTemplate jdbcTemplate;
     private final SmsProperties smsProperties;
     private final SmsCodeStore codeStore;
+    private final SmsAuthRateLimiter smsRateLimiter;
     private final MobileSmsAuthProvider smsProvider;
     private final AuthProperties authProperties;
     private final EventPublisher eventPublisher;
@@ -59,6 +62,7 @@ public class PasswordResetService {
             JdbcTemplate jdbcTemplate,
             SmsProperties smsProperties,
             SmsCodeStore codeStore,
+            SmsAuthRateLimiter smsRateLimiter,
             MobileSmsAuthProvider smsProvider,
             AuthProperties authProperties,
             EventPublisher eventPublisher,
@@ -71,6 +75,7 @@ public class PasswordResetService {
         this.jdbcTemplate = jdbcTemplate;
         this.smsProperties = smsProperties;
         this.codeStore = codeStore;
+        this.smsRateLimiter = smsRateLimiter;
         this.smsProvider = smsProvider;
         this.authProperties = authProperties;
         this.eventPublisher = eventPublisher;
@@ -84,7 +89,17 @@ public class PasswordResetService {
                     && StringUtils.hasText(normalizedPhone)
                     && user.phoneHash().equals(PhoneSupport.hashPhone(normalizedPhone, smsProperties.getPhoneHashPepper()))) {
                 String code = resolveCode();
-                smsProvider.sendVerifyCode(new MobileSmsAuthProvider.SendRequest(normalizedPhone, SmsScene.RESET, code));
+                String phoneHash = PhoneSupport.hashPhone(normalizedPhone, smsProperties.getPhoneHashPepper());
+                String ipHash = PhoneSupport.hashIp("password-reset", smsProperties.getPhoneHashPepper());
+                smsRateLimiter.checkSendAllowed(SmsScene.RESET, phoneHash, ipHash, PhoneSupport.maskPhone(normalizedPhone));
+                try {
+                    smsProvider.sendVerifyCode(new MobileSmsAuthProvider.SendRequest(normalizedPhone, SmsScene.RESET, code));
+                    smsRateLimiter.recordSend(SmsScene.RESET, phoneHash, ipHash);
+                } catch (SmsException ex) {
+                    throw ex;
+                } catch (RuntimeException ex) {
+                    throw new AuthException(502, "SMS_PROVIDER_ERROR", "短信服务暂时不可用，请稍后再试");
+                }
             }
         });
         return new ResetInitResult(ENUMERATION_SAFE_MASKED_PHONE, true);
@@ -93,23 +108,23 @@ public class PasswordResetService {
     @Transactional
     public String verify(String account, String phone, String code) {
         AuthUser user = findResettableUser(account)
-                .orElseThrow(() -> new AuthException(401, "SMS_CODE_INVALID", "sms code is invalid or expired"));
+                .orElseThrow(() -> new AuthException(401, "SMS_CODE_INVALID", "验证码错误或已过期，请重新获取"));
         String confirmLockKey = confirmLockKey(user.id());
         if (codeStore.getValue(confirmLockKey).isPresent()) {
-            throw new AuthException(429, "PASSWORD_RESET_LOCKED", "password reset is locked");
+            throw new AuthException(429, "PASSWORD_RESET_LOCKED", "操作过于频繁，请稍后再试");
         }
 
         String normalizedPhone = normalizeOptionalPhone(phone);
         if (!StringUtils.hasText(normalizedPhone)
                 || !user.phoneHash().equals(PhoneSupport.hashPhone(normalizedPhone, smsProperties.getPhoneHashPepper()))) {
             recordConfirmFailure(user.id());
-            throw new AuthException(401, "SMS_CODE_INVALID", "sms code is invalid or expired");
+            throw new AuthException(401, "SMS_CODE_INVALID", "验证码错误或已过期，请重新获取");
         }
         MobileSmsAuthProvider.VerifyResult verifyResult = smsProvider.checkVerifyCode(
                 new MobileSmsAuthProvider.VerifyRequest(normalizedPhone, code, null, SmsScene.RESET));
         if (!verifyResult.success()) {
             recordConfirmFailure(user.id());
-            throw new AuthException(401, "SMS_CODE_INVALID", "sms code is invalid or expired");
+            throw new AuthException(401, "SMS_CODE_INVALID", "验证码错误或已过期，请重新获取");
         }
         codeStore.delete(confirmFailKey(user.id()));
         return issueResetTicket(user);
@@ -120,11 +135,11 @@ public class PasswordResetService {
         JWTClaimsSet claims = verifyResetTicket(resetTicket);
         long userId = Long.parseLong(String.valueOf(claims.getClaim("user_id")));
         if (codeStore.getValue(confirmLockKey(userId)).isPresent()) {
-            throw new AuthException(429, "PASSWORD_RESET_LOCKED", "password reset is locked");
+            throw new AuthException(429, "PASSWORD_RESET_LOCKED", "操作过于频繁，请稍后再试");
         }
         if (!StringUtils.hasText(newPassword) || newPassword.length() < 8) {
             recordConfirmFailure(userId);
-            throw new AuthException(400, "PASSWORD_WEAK", "new password is too weak");
+            throw new AuthException(400, "PASSWORD_WEAK", "密码至少需要 8 位");
         }
         AuthUser user = userRepository.findById(userId)
                 .orElseThrow(() -> new AuthException(401, "USER_NOT_FOUND", "user not found"));

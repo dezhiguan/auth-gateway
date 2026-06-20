@@ -56,7 +56,7 @@ public class AliyunPnvsSmsAuthProvider implements MobileSmsAuthProvider {
             throw ex;
         } catch (Exception ex) {
             log.error("Aliyun PNVS send exception, phone={}", PhoneSupport.maskPhone(request.phone()), ex);
-            throw new SmsException(502, "SMS_PROVIDER_ERROR", "sms provider send failed");
+            throw new SmsException(502, "SMS_PROVIDER_ERROR", "短信服务暂时不可用，请稍后再试");
         }
     }
 
@@ -76,7 +76,7 @@ public class AliyunPnvsSmsAuthProvider implements MobileSmsAuthProvider {
             throw ex;
         } catch (Exception ex) {
             log.error("Aliyun PNVS verify exception, phone={}", PhoneSupport.maskPhone(request.phone()), ex);
-            throw new SmsException(502, "SMS_PROVIDER_ERROR", "sms provider verify failed");
+            throw new SmsException(502, "SMS_PROVIDER_ERROR", "验证码暂时无法校验，请稍后再试");
         }
     }
 
@@ -99,9 +99,23 @@ public class AliyunPnvsSmsAuthProvider implements MobileSmsAuthProvider {
         if (!Boolean.TRUE.equals(success) || !"OK".equalsIgnoreCase(responseCode)) {
             log.error("Aliyun PNVS send failed, requestId={}, code={}, message={}, phone={}",
                     requestId, responseCode, message, PhoneSupport.maskPhone(phone));
-            throw new SmsException(502, "SMS_PROVIDER_SEND_FAILED", "sms provider send failed");
+            if (isRateLimited(responseCode, message)) {
+                throw new SmsException(429, "SMS_PROVIDER_RATE_LIMITED", "验证码发送过于频繁，请稍后再试");
+            }
+            throw new SmsException(502, "SMS_PROVIDER_SEND_FAILED", "短信服务暂时不可用，请稍后再试");
         }
         return new SendResult(true, outId, requestId, responseCode, message);
+    }
+
+    private boolean isRateLimited(String responseCode, String message) {
+        String text = ((responseCode == null ? "" : responseCode) + " " + (message == null ? "" : message)).toLowerCase();
+        return text.contains("limit")
+                || text.contains("frequency")
+                || text.contains("too many")
+                || text.contains("频繁")
+                || text.contains("限流")
+                || text.contains("次数")
+                || text.contains("business_limit_control");
     }
 
     private VerifyResult mapVerifyResult(CheckSmsVerifyCodeResponseBody body, String phone, String requestId) {

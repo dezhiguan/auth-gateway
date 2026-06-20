@@ -51,7 +51,7 @@ public class LoginService {
     public TokenPair loginPassword(String account, String password, String targetAud, OAuthClient client) {
         String key = "authgw:login:password:fail:" + account;
         if (bucketStore.getValue(lockKey(account)).isPresent()) {
-            throw new AuthException(423, "CAPTCHA_REQUIRED", "captcha required");
+            throw new AuthException(423, "CAPTCHA_REQUIRED", "登录失败次数较多，请稍后再试");
         }
 
         AuthUser user = userRepository.findByAccount(account)
@@ -72,14 +72,14 @@ public class LoginService {
         MobileSmsAuthProvider.VerifyResult verifyResult = smsProvider.checkVerifyCode(
                 new MobileSmsAuthProvider.VerifyRequest(normalizedPhone, code, null, SmsScene.LOGIN));
         if (!verifyResult.success()) {
-            throw new AuthException(401, "SMS_CODE_INVALID", "sms code is invalid or expired");
+            throw new AuthException(401, "SMS_CODE_INVALID", "验证码错误或已过期，请重新获取");
         }
         smsRateLimiter.clearPendingCode(SmsScene.LOGIN, phoneHash);
 
         AuthUser user = userRepository.findByPhoneHash(phoneHash)
                 .orElseGet(() -> userRepository.createMobileUser(phoneHash));
         if (!"ACTIVE".equalsIgnoreCase(user.status())) {
-            throw new AuthException(404, "USER_NOT_FOUND", "user not found");
+            throw new AuthException(404, "USER_NOT_FOUND", "账号不存在或已停用");
         }
 
         enforceRagForgeAdminAccess(targetAud, user);
@@ -89,7 +89,7 @@ public class LoginService {
 
     public static void enforceRagForgeAdminAccess(String targetAud, AuthUser user) {
         if ("ragforge-admin-api".equals(targetAud) && !"ADMIN".equalsIgnoreCase(user.platformRole())) {
-            throw new AuthException(403, "PLATFORM_ROLE_DENIED", "platform role denied");
+            throw new AuthException(403, "PLATFORM_ROLE_DENIED", "当前账号没有 RAGForge 管理权限，请联系管理员开通");
         }
     }
 
@@ -98,10 +98,10 @@ public class LoginService {
         if (count >= 5) {
             bucketStore.setValue(lockKey(account), "1", LOCK_WINDOW);
             auditLogService.high("login.password.locked", null, null, java.util.Map.of("account", account));
-            return new AuthException(423, "CAPTCHA_REQUIRED", "captcha required");
+            return new AuthException(423, "CAPTCHA_REQUIRED", "登录失败次数较多，请稍后再试");
         }
         auditLogService.info("login.password.failed", null, null, java.util.Map.of("account", account, "failure_count", count));
-        return new AuthException(401, "BAD_CREDENTIALS", "bad credentials");
+        return new AuthException(401, "BAD_CREDENTIALS", "账号或密码不正确");
     }
 
     private String lockKey(String account) {

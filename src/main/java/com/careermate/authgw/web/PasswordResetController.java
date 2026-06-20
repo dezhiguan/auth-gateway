@@ -65,7 +65,7 @@ public class PasswordResetController {
             @JsonProperty("ticket_required") boolean ticketRequired) {
     }
 
-    public record ResetVerifyRequest(String account, String code) {
+    public record ResetVerifyRequest(String account, String phone, String code) {
     }
 
     @JsonPropertyOrder({"reset_ticket"})

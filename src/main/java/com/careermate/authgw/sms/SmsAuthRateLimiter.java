@@ -26,7 +26,7 @@ public class SmsAuthRateLimiter {
     public void checkSendAllowed(SmsScene scene, String phoneHash, String ipHash, String maskedPhone) {
         if (store.getValue(key("authgw:sms:send:cooldown", scene, phoneHash)).isPresent()) {
             log.warn("SMS send cooldown, phone={}", maskedPhone);
-            throw new SmsException(429, "SMS_SEND_TOO_FREQUENT", "sms send too frequent");
+            throw new SmsException(429, "SMS_SEND_TOO_FREQUENT", "验证码已发送，请稍后再试");
         }
         assertUnderLimit(store.getCounter(key("authgw:sms:send:day", scene, phoneHash)),
                 PHONE_DAY_SEND_LIMIT, "SMS_PHONE_DAY_LIMITED", "send phone day", maskedPhone);
@@ -68,7 +68,7 @@ public class SmsAuthRateLimiter {
     private void assertUnderLimit(long count, int limit, String code, String label, String subject) {
         if (count >= limit) {
             log.warn("SMS rate limit {}, subject={}, count={}", label, subject, count);
-            throw new SmsException(429, code, "sms send limited");
+            throw new SmsException(429, code, "验证码发送过于频繁，请稍后再试");
         }
     }
 

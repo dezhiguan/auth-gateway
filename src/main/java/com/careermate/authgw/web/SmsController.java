@@ -40,7 +40,7 @@ public class SmsController {
             HttpServletRequest servletRequest) {
         SmsScene scene = SmsScene.fromValue(request.scene());
         if (scene == null) {
-            throw new SmsException(400, "SMS_SCENE_INVALID", "sms scene is invalid");
+            throw new SmsException(400, "SMS_SCENE_INVALID", "验证码场景不正确，请刷新页面后重试");
         }
 
         String phone = PhoneSupport.requireMainlandPhone(request.phone());
@@ -54,7 +54,7 @@ public class SmsController {
         MobileSmsAuthProvider.SendResult result = smsProvider.sendVerifyCode(
                 new MobileSmsAuthProvider.SendRequest(phone, scene, code));
         if (!result.success()) {
-            throw new SmsException(502, "SMS_PROVIDER_SEND_FAILED", "sms provider send failed");
+            throw new SmsException(502, "SMS_PROVIDER_SEND_FAILED", "短信服务暂时不可用，请稍后再试");
         }
 
         String codeHash = PhoneSupport.hashCode(code, properties.getPhoneHashPepper());
