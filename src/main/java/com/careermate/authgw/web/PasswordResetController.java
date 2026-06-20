@@ -5,6 +5,7 @@ import com.careermate.authgw.auth.OAuthClient;
 import com.careermate.authgw.auth.PasswordResetService;
 import com.careermate.authgw.auth.TokenPair;
 import com.careermate.authgw.oauth.ClientAuthenticator;
+import com.careermate.authgw.sms.SmsException;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import java.util.Map;
@@ -52,6 +53,12 @@ public class PasswordResetController {
 
     @ExceptionHandler(AuthException.class)
     public ResponseEntity<Map<String, Object>> handleAuthException(AuthException ex) {
+        return ResponseEntity.status(ex.status())
+                .body(Map.of("error", ex.code(), "message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(SmsException.class)
+    public ResponseEntity<Map<String, Object>> handleSmsException(SmsException ex) {
         return ResponseEntity.status(ex.status())
                 .body(Map.of("error", ex.code(), "message", ex.getMessage()));
     }
