@@ -166,10 +166,16 @@ public class TokenIssuer {
     }
 
     private String deriveRagRole(AuthUser user) {
-        if ("ADMIN".equalsIgnoreCase(user.platformRole())) {
-            return "ADMIN";
+        String role = user.platformRole();
+        if (role == null || role.isBlank()) {
+            return "KB_VIEWER";
         }
-        return "KB_VIEWER";
+        return switch (role.toUpperCase()) {
+            case "ADMIN" -> "ADMIN";
+            case "KB_EDITOR" -> "KB_EDITOR";
+            case "KB_VIEWER" -> "KB_VIEWER";
+            default -> "KB_VIEWER";
+        };
     }
 
     private List<String> scopesFor(AuthUser user, String targetAud) {

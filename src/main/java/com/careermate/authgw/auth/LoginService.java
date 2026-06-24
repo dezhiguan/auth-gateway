@@ -8,6 +8,7 @@ import com.careermate.authgw.sms.PhoneSupport;
 import com.careermate.authgw.sms.SmsProperties;
 import com.careermate.authgw.sms.SmsScene;
 import java.time.Duration;
+import java.util.Set;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -88,7 +89,11 @@ public class LoginService {
     }
 
     public static void enforceRagForgeAdminAccess(String targetAud, AuthUser user) {
-        if ("ragforge-admin-api".equals(targetAud) && !"ADMIN".equalsIgnoreCase(user.platformRole())) {
+        if (!"ragforge-admin-api".equals(targetAud)) {
+            return;
+        }
+        String role = user.platformRole() == null ? "" : user.platformRole().toUpperCase();
+        if (!Set.of("ADMIN", "KB_EDITOR", "KB_VIEWER").contains(role)) {
             throw new AuthException(403, "PLATFORM_ROLE_DENIED", "当前账号没有 RAGForge 管理权限，请联系管理员开通");
         }
     }
