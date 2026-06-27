@@ -2,6 +2,7 @@ package com.careermate.authgw.web;
 
 import com.careermate.authgw.auth.AuthException;
 import com.careermate.authgw.auth.RegistrationService;
+import com.careermate.authgw.sms.SmsException;
 import java.util.Map;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -39,6 +40,12 @@ public class RegistrationController {
 
     @ExceptionHandler(AuthException.class)
     public ResponseEntity<Map<String, Object>> handleAuthException(AuthException ex) {
+        return ResponseEntity.status(ex.status())
+                .body(Map.of("error", ex.code(), "message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(SmsException.class)
+    public ResponseEntity<Map<String, Object>> handleSmsException(SmsException ex) {
         return ResponseEntity.status(ex.status())
                 .body(Map.of("error", ex.code(), "message", ex.getMessage()));
     }
