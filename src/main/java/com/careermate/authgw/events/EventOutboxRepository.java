@@ -38,7 +38,9 @@ public class EventOutboxRepository {
                         WHERE event_id = ?
                         """,
                 attempts,
-                deliveredAt,
+                // delivered_at 是 timestamp without time zone：PG JDBC 不能直接绑定 java.time.Instant，
+                // 需转换为 java.sql.Timestamp，否则会抛 SQLException 导致登出事务回滚。
+                java.sql.Timestamp.from(deliveredAt),
                 eventId);
     }
 
