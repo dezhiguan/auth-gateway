@@ -52,6 +52,50 @@ public class AuthUserRepository {
                 tenantId);
     }
 
+    public Optional<AuthUser> findByEmailHash(String emailHash) {
+        List<AuthUser> users = jdbcTemplate.query("""
+                        SELECT id, phone_hash, email_hash, username, password_hash, tenant_id, platform_role, session_version, status
+                        FROM auth_users
+                        WHERE email_hash = ?
+                        LIMIT 1
+                        """,
+                (rs, rowNum) -> mapUser(rs),
+                emailHash);
+        return users.stream().findFirst();
+    }
+
+    /** 全新注册：手机号为关联键，可同时带 email/username/password。 */
+    public AuthUser createFullUser(String phoneHash, String emailHash, String username, String passwordHash) {
+        String tenantId = "tn_phone_" + phoneHash.substring(0, Math.min(16, phoneHash.length()));
+        return jdbcTemplate.queryForObject("""
+                        INSERT INTO auth_users(phone_hash, email_hash, username, password_hash, tenant_id, platform_role, session_version, status, created_at)
+                        VALUES (?, ?, ?, ?, ?, 'USER', 0, 'ACTIVE', now())
+                        RETURNING id, phone_hash, email_hash, username, password_hash, tenant_id, platform_role, session_version, status
+                        """,
+                (rs, rowNum) -> mapUser(rs),
+                phoneHash, emailHash, username, passwordHash, tenantId);
+    }
+
+    /** 补全：仅填充当前为空的字段，不覆盖已有值。 */
+    public void enrich(long id, String emailHash, String username, String passwordHash) {
+        jdbcTemplate.update("""
+                        UPDATE auth_users
+                        SET email_hash = COALESCE(email_hash, ?),
+                            username = COALESCE(username, ?),
+                            password_hash = COALESCE(password_hash, ?)
+                        WHERE id = ?
+                        """,
+                emailHash, username, passwordHash, id);
+    }
+
+    public void updateEmailHash(long id, String emailHash) {
+        jdbcTemplate.update("UPDATE auth_users SET email_hash = ? WHERE id = ?", emailHash, id);
+    }
+
+    public void updateUsername(long id, String username) {
+        jdbcTemplate.update("UPDATE auth_users SET username = ? WHERE id = ?", username, id);
+    }
+
     public Optional<AuthUser> findById(long id) {
         List<AuthUser> users = jdbcTemplate.query("""
                         SELECT id, phone_hash, email_hash, username, password_hash, tenant_id, platform_role, session_version, status
