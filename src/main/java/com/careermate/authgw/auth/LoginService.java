@@ -8,7 +8,6 @@ import com.careermate.authgw.sms.PhoneSupport;
 import com.careermate.authgw.sms.SmsProperties;
 import com.careermate.authgw.sms.SmsScene;
 import java.time.Duration;
-import java.util.Set;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -19,6 +18,7 @@ public class LoginService {
     private static final Duration LOCK_WINDOW = Duration.ofMinutes(30);
 
     private final AuthUserRepository userRepository;
+    private final MembershipRepository membershipRepository;
     private final PasswordHasher passwordHasher;
     private final TokenIssuer tokenIssuer;
     private final SmsCodeStore bucketStore;
@@ -30,6 +30,7 @@ public class LoginService {
 
     public LoginService(
             AuthUserRepository userRepository,
+            MembershipRepository membershipRepository,
             PasswordHasher passwordHasher,
             TokenIssuer tokenIssuer,
             SmsCodeStore bucketStore,
@@ -39,6 +40,7 @@ public class LoginService {
             JdbcTemplate jdbcTemplate,
             AuditLogService auditLogService) {
         this.userRepository = userRepository;
+        this.membershipRepository = membershipRepository;
         this.passwordHasher = passwordHasher;
         this.tokenIssuer = tokenIssuer;
         this.bucketStore = bucketStore;
@@ -62,7 +64,7 @@ public class LoginService {
         }
         bucketStore.delete(key);
 
-        enforceRagForgeAdminAccess(targetAud, user);
+        enforceRagForgeAccess(targetAud, user);
         auditLogService.info("login.password.success", user.id(), client.clientId(), java.util.Map.of("target_aud", targetAud));
         return tokenIssuer.issueUserTokens(user, client, targetAud);
     }
@@ -83,22 +85,26 @@ public class LoginService {
             throw new AuthException(404, "USER_NOT_FOUND", "账号不存在或已停用");
         }
 
-        enforceRagForgeAdminAccess(targetAud, user);
+        enforceRagForgeAccess(targetAud, user);
         auditLogService.info("login.mobile.success", user.id(), client.clientId(), java.util.Map.of("target_aud", targetAud, "phone", phone));
         return tokenIssuer.issueUserTokens(user, client, targetAud);
     }
 
-    public static void enforceRagForgeAdminAccess(String targetAud, AuthUser user) {
+    /**
+     * RAG 准入：登录目标受众为 ragforge-admin-api 时，要求用户拥有 ragforge 应用准入。
+     * 自助注册会写入该准入；CareerMate-only 用户未在 RAG 注册则被拒。
+     */
+    public void enforceRagForgeAccess(String targetAud, AuthUser user) {
         if (!"ragforge-admin-api".equals(targetAud)) {
             return;
         }
-        String role = user.platformRole() == null ? "" : user.platformRole().toUpperCase();
-        if (!Set.of("ADMIN", "KB_EDITOR", "KB_VIEWER").contains(role)) {
-            throw new AuthException(403, "PLATFORM_ROLE_DENIED", "当前账号没有 RAGForge 管理权限，请联系管理员开通");
+        if (membershipRepository.find(user.id(), "ragforge").isEmpty()) {
+            throw new AuthException(403, "RAGFORGE_ACCESS_DENIED", "请先在 RAGForge 注册或由管理员开通访问权限");
         }
     }
 
     private java.util.Optional<AuthUser> findPasswordLoginUser(String account) {
+        // 1) 手机号
         try {
             String phone = PhoneSupport.requireMainlandPhone(account);
             String phoneHash = PhoneSupport.hashPhone(phone, smsProperties.getPhoneHashPepper());
@@ -107,8 +113,17 @@ public class LoginService {
                 return byPhone;
             }
         } catch (RuntimeException ignored) {
-            // Not a phone login; fall through to username lookup.
+            // 非手机号，继续尝试邮箱/用户名
         }
+        // 2) 邮箱
+        if (EmailSupport.isValidEmail(account)) {
+            String emailHash = EmailSupport.hashEmail(account, smsProperties.getPhoneHashPepper());
+            java.util.Optional<AuthUser> byEmail = userRepository.findByEmailHash(emailHash);
+            if (byEmail.isPresent()) {
+                return byEmail;
+            }
+        }
+        // 3) 用户名
         return userRepository.findByAccount(account);
     }
 

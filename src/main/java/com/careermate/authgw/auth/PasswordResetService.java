@@ -40,6 +40,7 @@ public class PasswordResetService {
     private static final Duration CONFIRM_LOCK_TTL = Duration.ofMinutes(30);
 
     private final AuthUserRepository userRepository;
+    private final MembershipRepository membershipRepository;
     private final PasswordHasher passwordHasher;
     private final TokenIssuer tokenIssuer;
     private final JwtSigner jwtSigner;
@@ -55,6 +56,7 @@ public class PasswordResetService {
 
     public PasswordResetService(
             AuthUserRepository userRepository,
+            MembershipRepository membershipRepository,
             PasswordHasher passwordHasher,
             TokenIssuer tokenIssuer,
             JwtSigner jwtSigner,
@@ -68,6 +70,7 @@ public class PasswordResetService {
             EventPublisher eventPublisher,
             AuditLogService auditLogService) {
         this.userRepository = userRepository;
+        this.membershipRepository = membershipRepository;
         this.passwordHasher = passwordHasher;
         this.tokenIssuer = tokenIssuer;
         this.jwtSigner = jwtSigner;
@@ -143,7 +146,10 @@ public class PasswordResetService {
         }
         AuthUser user = userRepository.findById(userId)
                 .orElseThrow(() -> new AuthException(401, "USER_NOT_FOUND", "user not found"));
-        LoginService.enforceRagForgeAdminAccess(targetAud, user);
+        if ("ragforge-admin-api".equals(targetAud)
+                && membershipRepository.find(user.id(), "ragforge").isEmpty()) {
+            throw new AuthException(403, "RAGFORGE_ACCESS_DENIED", "请先在 RAGForge 注册或由管理员开通访问权限");
+        }
 
         userRepository.updatePasswordAndIncrementSessionVersion(userId, passwordHasher.hash(newPassword));
         jdbcTemplate.update("""

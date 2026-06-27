@@ -174,7 +174,8 @@ public class TokenIssuer {
             case "ADMIN" -> "ADMIN";
             case "KB_EDITOR" -> "KB_EDITOR";
             case "KB_VIEWER" -> "KB_VIEWER";
-            default -> "KB_VIEWER";
+            case "USER" -> "USER";
+            default -> "USER";
         };
     }
 
