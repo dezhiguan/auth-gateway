@@ -10,7 +10,11 @@ import org.springframework.stereotype.Component;
 @Profile("dev")
 public class DevAuthDataSeeder {
 
-    public DevAuthDataSeeder(JdbcTemplate jdbcTemplate, PasswordHasher passwordHasher, SmsProperties smsProperties) {
+    public DevAuthDataSeeder(
+            JdbcTemplate jdbcTemplate,
+            PasswordHasher passwordHasher,
+            SmsProperties smsProperties,
+            MembershipRepository membershipRepository) {
         String phoneHash = PhoneSupport.hashPhone("13800000000", smsProperties.getPhoneHashPepper());
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM auth_users WHERE username = ?",
@@ -24,14 +28,24 @@ public class DevAuthDataSeeder {
                             """,
                     phoneHash,
                     "admin");
-            return;
+        } else {
+            jdbcTemplate.update("""
+                            INSERT INTO auth_users(phone_hash, username, password_hash, platform_role, session_version, status, created_at)
+                            VALUES (?, ?, ?, 'ADMIN', 0, 'ACTIVE', now())
+                            """,
+                    phoneHash,
+                    "admin",
+                    passwordHasher.hash("Admin123!"));
         }
-        jdbcTemplate.update("""
-                        INSERT INTO auth_users(phone_hash, username, password_hash, platform_role, session_version, status, created_at)
-                        VALUES (?, ?, ?, 'ADMIN', 0, 'ACTIVE', now())
-                        """,
-                phoneHash,
-                "admin",
-                passwordHasher.hash("Admin123!"));
+
+        // dev admin 同时拥有两个 App 的准入，便于本地联调
+        Long adminId = jdbcTemplate.queryForObject(
+                "SELECT id FROM auth_users WHERE username = ?",
+                Long.class,
+                "admin");
+        if (adminId != null) {
+            membershipRepository.ensureMembership(adminId, "ragforge", "ADMIN");
+            membershipRepository.ensureMembership(adminId, "careermate", "USER");
+        }
     }
 }
