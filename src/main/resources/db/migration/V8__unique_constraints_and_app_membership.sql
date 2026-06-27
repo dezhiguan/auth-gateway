@@ -23,3 +23,18 @@ CREATE TABLE user_app_membership (
 );
 
 CREATE INDEX idx_user_app_membership_user ON user_app_membership(user_id);
+
+-- 存量准入回填：保证迁移前已能用的用户不被新准入策略挡住。
+-- 1) 拥有平台角色(ADMIN/KB_EDITOR/KB_VIEWER)的用户保留 RAGForge 准入，沿用其角色。
+INSERT INTO user_app_membership (user_id, app, role, status)
+SELECT id, 'ragforge', upper(platform_role), 'ACTIVE'
+FROM auth_users
+WHERE upper(platform_role) IN ('ADMIN', 'KB_EDITOR', 'KB_VIEWER')
+ON CONFLICT (user_id, app) DO NOTHING;
+
+-- 2) 手机号注册过的用户标记 CareerMate 准入。
+INSERT INTO user_app_membership (user_id, app, role, status)
+SELECT id, 'careermate', 'USER', 'ACTIVE'
+FROM auth_users
+WHERE phone_hash IS NOT NULL
+ON CONFLICT (user_id, app) DO NOTHING;
