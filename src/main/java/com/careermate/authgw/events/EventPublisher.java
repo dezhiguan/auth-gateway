@@ -10,6 +10,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 @Component
 public class EventPublisher {
@@ -35,14 +37,19 @@ public class EventPublisher {
         this.eventDelivery = eventDelivery;
     }
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void publish(String eventType, Map<String, Object> payload) {
-        Instant occurredAt = Instant.now();
-        List<Subscription> subscriptions = subscriptionsFor(eventType);
-        if (subscriptions.isEmpty()) {
-            log.info("auth event published type={}, at={}, payload={}, deliveries=0", eventType, occurredAt, payload);
-            return;
+        try {
+            Instant occurredAt = Instant.now();
+            List<Subscription> subscriptions = subscriptionsFor(eventType);
+            if (subscriptions.isEmpty()) {
+                log.info("auth event published type={}, at={}, payload={}, deliveries=0", eventType, occurredAt, payload);
+                return;
+            }
+            subscriptions.forEach(subscription -> publishToSubscription(eventType, occurredAt, payload, subscription));
+        } catch (RuntimeException ex) {
+            log.error("auth event publish failed type={}, payload={}", eventType, payload, ex);
         }
-        subscriptions.forEach(subscription -> publishToSubscription(eventType, occurredAt, payload, subscription));
     }
 
     private void publishToSubscription(
@@ -51,44 +58,54 @@ public class EventPublisher {
             Map<String, Object> payload,
             Subscription subscription) {
         String eventId = UUID.randomUUID().toString();
-        Map<String, Object> envelope = Map.ofEntries(
-                Map.entry("event_id", eventId),
-                Map.entry("type", eventType),
-                Map.entry("event_type", eventType),
-                Map.entry("occurred_at", occurredAt.getEpochSecond()),
-                Map.entry("occurred_at_iso", occurredAt.toString()),
-                Map.entry("data", payload),
-                Map.entry("payload", payload));
-        eventOutboxRepository.createPending(
-                eventId,
-                eventType,
-                subscription.subscriber(),
-                subscription.endpointUrl(),
-                envelope);
-        EventDelivery.DeliveryResult result = eventDelivery.deliver(
-                subscription.endpointUrl(),
-                subscription.hmacSecret(),
-                envelope);
-        if (result.delivered()) {
-            eventOutboxRepository.markDelivered(eventId, result.attempts(), Instant.now());
-            log.info(
-                    "auth event delivered event_id={}, type={}, subscriber={}, endpoint={}, attempts={}",
+        try {
+            Map<String, Object> envelope = Map.ofEntries(
+                    Map.entry("event_id", eventId),
+                    Map.entry("type", eventType),
+                    Map.entry("event_type", eventType),
+                    Map.entry("occurred_at", occurredAt.getEpochSecond()),
+                    Map.entry("occurred_at_iso", occurredAt.toString()),
+                    Map.entry("data", payload),
+                    Map.entry("payload", payload));
+            eventOutboxRepository.createPending(
                     eventId,
                     eventType,
                     subscription.subscriber(),
                     subscription.endpointUrl(),
-                    result.attempts());
-            return;
+                    envelope);
+            EventDelivery.DeliveryResult result = eventDelivery.deliver(
+                    subscription.endpointUrl(),
+                    subscription.hmacSecret(),
+                    envelope);
+            if (result.delivered()) {
+                eventOutboxRepository.markDelivered(eventId, result.attempts(), Instant.now());
+                log.info(
+                        "auth event delivered event_id={}, type={}, subscriber={}, endpoint={}, attempts={}",
+                        eventId,
+                        eventType,
+                        subscription.subscriber(),
+                        subscription.endpointUrl(),
+                        result.attempts());
+                return;
+            }
+            eventOutboxRepository.markFailed(eventId, result.attempts(), result.lastError());
+            log.error(
+                    "auth event delivery failed event_id={}, type={}, subscriber={}, endpoint={}, attempts={}, error={}",
+                    eventId,
+                    eventType,
+                    subscription.subscriber(),
+                    subscription.endpointUrl(),
+                    result.attempts(),
+                    result.lastError());
+        } catch (RuntimeException ex) {
+            log.error(
+                    "auth event publish failed event_id={}, type={}, subscriber={}, endpoint={}",
+                    eventId,
+                    eventType,
+                    subscription.subscriber(),
+                    subscription.endpointUrl(),
+                    ex);
         }
-        eventOutboxRepository.markFailed(eventId, result.attempts(), result.lastError());
-        log.error(
-                "auth event delivery failed event_id={}, type={}, subscriber={}, endpoint={}, attempts={}, error={}",
-                eventId,
-                eventType,
-                subscription.subscriber(),
-                subscription.endpointUrl(),
-                result.attempts(),
-                result.lastError());
     }
 
     private List<Subscription> subscriptionsFor(String eventType) {

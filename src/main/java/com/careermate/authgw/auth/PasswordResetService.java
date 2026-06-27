@@ -25,6 +25,8 @@ import java.util.Date;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,6 +34,8 @@ import org.springframework.util.StringUtils;
 
 @Service
 public class PasswordResetService {
+
+    private static final Logger log = LoggerFactory.getLogger(PasswordResetService.class);
 
     public static final String ENUMERATION_SAFE_MASKED_PHONE = "***********";
 
@@ -165,7 +169,7 @@ public class PasswordResetService {
                         """,
                 userId);
         codeStore.delete(confirmFailKey(userId));
-        eventPublisher.publish("user.password.changed", Map.of("user_id", userId));
+        publishPasswordChanged(userId);
         auditLogService.high("user.password.changed", userId, client.clientId(), Map.of("reset_ticket", resetTicket));
 
         user = userRepository.findById(userId)
@@ -255,6 +259,14 @@ public class PasswordResetService {
             return smsProperties.getMockCode();
         }
         return PhoneSupport.generateNumericCode(6);
+    }
+
+    private void publishPasswordChanged(long userId) {
+        try {
+            eventPublisher.publish("user.password.changed", Map.of("user_id", userId));
+        } catch (RuntimeException ex) {
+            log.error("failed to publish password changed event user_id={}", userId, ex);
+        }
     }
 
     private String confirmFailKey(long userId) {

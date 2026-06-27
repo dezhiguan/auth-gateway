@@ -5,6 +5,8 @@ import com.careermate.authgw.events.EventPublisher;
 import com.careermate.authgw.sms.SmsProperties;
 import java.util.Map;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -17,6 +19,8 @@ import org.springframework.util.StringUtils;
  */
 @Service
 public class CredentialService {
+
+    private static final Logger log = LoggerFactory.getLogger(CredentialService.class);
 
     // 允许中文（CJK 基本汉字）、字母、数字、下划线；中文名可短至 2 字，故下限取 2。
     private static final Pattern USERNAME = Pattern.compile("^[A-Za-z0-9_\\u4e00-\\u9fa5]{2,32}$");
@@ -56,7 +60,7 @@ public class CredentialService {
         validatePassword(newPassword);
         userRepository.updatePasswordAndIncrementSessionVersion(userId, passwordHasher.hash(newPassword));
         revokeAllSessions(userId);
-        eventPublisher.publish("user.password.changed", Map.of("user_id", userId));
+        publishPasswordChanged(userId);
         auditLogService.high("user.password.changed", userId, null, Map.of("via", "credential"));
     }
 
@@ -128,6 +132,14 @@ public class CredentialService {
         boolean hasDigit = password.chars().anyMatch(Character::isDigit);
         if (!hasLetter || !hasDigit) {
             throw new AuthException(400, "PASSWORD_WEAK", "密码需同时包含字母和数字");
+        }
+    }
+
+    private void publishPasswordChanged(long userId) {
+        try {
+            eventPublisher.publish("user.password.changed", Map.of("user_id", userId));
+        } catch (RuntimeException ex) {
+            log.error("failed to publish password changed event user_id={}", userId, ex);
         }
     }
 }

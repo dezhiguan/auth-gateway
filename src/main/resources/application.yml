@@ -39,6 +39,13 @@ auth:
   exchange-token-ttl-seconds: ${AUTH_EXCHANGE_TOKEN_TTL_SECONDS:600}
   events:
     dev-allow-empty-secret: false
+    subscriptions:
+      ragforge:
+        endpoint: ${AUTH_RAGFORGE_EVENT_ENDPOINT:}
+        hmac-secret: ${AUTH_RAGFORGE_EVENT_HMAC_SECRET:}
+      careermate:
+        endpoint: ${AUTH_CAREERMATE_EVENT_ENDPOINT:}
+        hmac-secret: ${AUTH_CAREERMATE_EVENT_HMAC_SECRET:}
   sms:
     storage: memory
     phone-hash-pepper: ${AUTH_SMS_PHONE_HASH_PEPPER:auth-gateway-dev-pepper}
