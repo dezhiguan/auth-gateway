@@ -74,7 +74,19 @@ public class TokenService {
             throw new AuthException(401, "SESSION_ID_MISSING", "session_id is missing");
         }
         revokeSession(sessionId);
-        eventPublisher.publish("session.revoked", Map.of("session_id", sessionId, "reason", "logout"));
+        // 携带本次 access token 的 jti，订阅方（如 RAGForge）据此把该访问令牌加入吊销名单，
+        // 实现"登出后访问令牌立即失效"（单会话登出，按 jti 粒度，不影响其它会话）。
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("session_id", sessionId);
+        payload.put("reason", "logout");
+        String jti = stringClaim(claims, "jti");
+        if (jti == null) {
+            jti = claims.getJWTID();
+        }
+        if (jti != null) {
+            payload.put("jti", jti);
+        }
+        eventPublisher.publish("session.revoked", payload);
     }
 
     @Transactional
