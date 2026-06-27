@@ -18,7 +18,8 @@ import org.springframework.util.StringUtils;
 @Service
 public class CredentialService {
 
-    private static final Pattern USERNAME = Pattern.compile("^[A-Za-z0-9_]{3,32}$");
+    // 允许中文（CJK 基本汉字）、字母、数字、下划线；中文名可短至 2 字，故下限取 2。
+    private static final Pattern USERNAME = Pattern.compile("^[A-Za-z0-9_\\u4e00-\\u9fa5]{2,32}$");
 
     private final AuthUserRepository userRepository;
     private final PasswordHasher passwordHasher;
@@ -89,7 +90,7 @@ public class CredentialService {
     public void setUsername(long userId, String username) {
         String normalized = username == null ? "" : username.trim();
         if (!USERNAME.matcher(normalized).matches()) {
-            throw new AuthException(400, "USERNAME_FORMAT_INVALID", "用户名需为 3-32 位字母、数字或下划线");
+            throw new AuthException(400, "USERNAME_FORMAT_INVALID", "用户名需为 2-32 位中文、字母、数字或下划线");
         }
         userRepository.findByAccount(normalized)
                 .filter(u -> u.id() != userId)

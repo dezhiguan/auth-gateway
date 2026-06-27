@@ -22,7 +22,8 @@ import org.springframework.util.StringUtils;
 @Service
 public class RegistrationService {
 
-    private static final Pattern USERNAME = Pattern.compile("^[A-Za-z0-9_]{3,32}$");
+    // 允许中文（CJK 基本汉字）、字母、数字、下划线；中文名可短至 2 字，故下限取 2。
+    private static final Pattern USERNAME = Pattern.compile("^[A-Za-z0-9_\\u4e00-\\u9fa5]{2,32}$");
     private static final Set<String> APPS = Set.of("careermate", "ragforge");
 
     private final AuthUserRepository userRepository;
@@ -134,7 +135,7 @@ public class RegistrationService {
 
     private void validateUsername(String username) {
         if (!USERNAME.matcher(username).matches()) {
-            throw new AuthException(400, "USERNAME_FORMAT_INVALID", "用户名需为 3-32 位字母、数字或下划线");
+            throw new AuthException(400, "USERNAME_FORMAT_INVALID", "用户名需为 2-32 位中文、字母、数字或下划线");
         }
     }
 
