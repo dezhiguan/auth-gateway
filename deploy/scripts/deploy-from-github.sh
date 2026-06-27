@@ -15,7 +15,7 @@ CURRENT_LINK="/opt/auth-gateway/current"
 K8S_DIR="/opt/auth-gateway/deploy/k8s/auth-gateway"
 NAMESPACE="${AUTH_GATEWAY_K8S_NAMESPACE:-auth-gateway}"
 DEPLOYMENT="auth-gateway"
-IMAGE="auth-gateway:${SHORT_SHA}"
+IMAGE="${AUTH_GATEWAY_IMAGE:-auth-gateway:${SHORT_SHA}}"
 IMAGE_TAR="/tmp/auth-gateway-${SHORT_SHA}.tar"
 NODEPORT="${AUTH_GATEWAY_NODEPORT:-31091}"
 APP_UID="${AUTH_GATEWAY_APP_UID:-10001}"
@@ -62,6 +62,32 @@ wait_for_nodeport_health() {
   done
   echo "ERROR: health check timed out: ${url}" >&2
   return 1
+}
+
+registry_host() {
+  local image_or_registry="$1"
+  printf '%s\n' "${image_or_registry%%/*}"
+}
+
+ensure_image_pull_secret() {
+  if [[ -z "${ACR_USERNAME:-}" || -z "${ACR_PASSWORD:-}" ]]; then
+    echo "Skip imagePullSecret setup (ACR_USERNAME/ACR_PASSWORD not set)"
+    return 0
+  fi
+
+  local registry="${ACR_DOCKER_SERVER:-}"
+  registry="${registry:-${ACR_REGISTRY:-}}"
+  registry="${registry:-${IMAGE}}"
+  registry="$(registry_host "${registry}")"
+
+  echo "Creating/updating imagePullSecret acr-pull-secret for ${registry}"
+  k3s kubectl -n "${NAMESPACE}" create secret docker-registry acr-pull-secret \
+    --docker-server="${registry}" \
+    --docker-username="${ACR_USERNAME}" \
+    --docker-password="${ACR_PASSWORD}" \
+    --dry-run=client -o yaml | k3s kubectl apply -f -
+  k3s kubectl -n "${NAMESPACE}" patch serviceaccount default \
+    -p '{"imagePullSecrets":[{"name":"acr-pull-secret"}]}' >/dev/null
 }
 
 env_file_value() {
@@ -122,47 +148,56 @@ echo "[3/8] Previous release: ${PREVIOUS_RELEASE:-<none>}"
 echo "[4/8] Switch current symlink"
 ln -sfn "${RELEASE_DIR}" "${CURRENT_LINK}"
 
-echo "[5/8] Build Docker image ${IMAGE}"
-JAR_SHA="$(sha256sum "${RELEASE_DIR}/app.jar" | awk '{print $1}' | head -c 16)"
-CACHE_TAG="auth-gateway:jar-${JAR_SHA}"
-echo "  jar sha=${JAR_SHA} (cache tag: ${CACHE_TAG})"
-DOCKER_CACHE_HIT=0
-if docker image inspect "${CACHE_TAG}" >/dev/null 2>&1; then
-  echo "  cache hit (docker): retag without rebuild"
-  docker tag "${CACHE_TAG}" "${IMAGE}"
-  docker tag "${CACHE_TAG}" auth-gateway:latest
-  DOCKER_CACHE_HIT=1
+if [[ "${USE_REMOTE_IMAGE:-0}" == "1" ]]; then
+  echo "[5/8] Use remote image ${IMAGE}; skip local Docker build"
 else
-  echo "  cache miss: building image"
-  docker build --build-arg JAR_FILE=app.jar \
-    -t "${IMAGE}" -t auth-gateway:latest -t "${CACHE_TAG}" \
-    "${CURRENT_LINK}"
-fi
-
-echo "[6/8] Import image into k3s containerd"
-CTR_CACHE_HIT=0
-if [[ "${DOCKER_CACHE_HIT}" == "1" ]] \
-   && k3s ctr -n k8s.io images ls 2>/dev/null | grep -F -q "${CACHE_TAG}"; then
-  echo "  cache hit (containerd): tagging in-place (no save/import)"
-  if k3s ctr -n k8s.io images tag --force \
-        "docker.io/library/${CACHE_TAG}" \
-        "docker.io/library/${IMAGE}" >/dev/null 2>&1 \
-     && k3s ctr -n k8s.io images tag --force \
-        "docker.io/library/${CACHE_TAG}" \
-        "docker.io/library/auth-gateway:latest" >/dev/null 2>&1; then
-    CTR_CACHE_HIT=1
+  echo "[5/8] Build Docker image ${IMAGE}"
+  JAR_SHA="$(sha256sum "${RELEASE_DIR}/app.jar" | awk '{print $1}' | head -c 16)"
+  CACHE_TAG="auth-gateway:jar-${JAR_SHA}"
+  echo "  jar sha=${JAR_SHA} (cache tag: ${CACHE_TAG})"
+  DOCKER_CACHE_HIT=0
+  if docker image inspect "${CACHE_TAG}" >/dev/null 2>&1; then
+    echo "  cache hit (docker): retag without rebuild"
+    docker tag "${CACHE_TAG}" "${IMAGE}"
+    docker tag "${CACHE_TAG}" auth-gateway:latest
+    DOCKER_CACHE_HIT=1
   else
-    echo "  ctr tag failed, falling back to save+import"
+    echo "  cache miss: building image"
+    docker build --build-arg JAR_FILE=app.jar \
+      -t "${IMAGE}" -t auth-gateway:latest -t "${CACHE_TAG}" \
+      "${CURRENT_LINK}"
   fi
 fi
-if [[ "${CTR_CACHE_HIT}" != "1" ]]; then
-  docker save -o "${IMAGE_TAR}" "${IMAGE}" auth-gateway:latest "${CACHE_TAG}"
-  k3s ctr -n k8s.io images import "${IMAGE_TAR}"
-  rm -f "${IMAGE_TAR}"
+
+if [[ "${USE_REMOTE_IMAGE:-0}" == "1" ]]; then
+  echo "[6/8] Skip k3s containerd import for remote image"
+else
+  echo "[6/8] Import image into k3s containerd"
+  CTR_CACHE_HIT=0
+  if [[ "${DOCKER_CACHE_HIT}" == "1" ]] \
+     && k3s ctr -n k8s.io images ls 2>/dev/null | grep -F -q "${CACHE_TAG}"; then
+    echo "  cache hit (containerd): tagging in-place (no save/import)"
+    if k3s ctr -n k8s.io images tag --force \
+          "docker.io/library/${CACHE_TAG}" \
+          "docker.io/library/${IMAGE}" >/dev/null 2>&1 \
+       && k3s ctr -n k8s.io images tag --force \
+          "docker.io/library/${CACHE_TAG}" \
+          "docker.io/library/auth-gateway:latest" >/dev/null 2>&1; then
+      CTR_CACHE_HIT=1
+    else
+      echo "  ctr tag failed, falling back to save+import"
+    fi
+  fi
+  if [[ "${CTR_CACHE_HIT}" != "1" ]]; then
+    docker save -o "${IMAGE_TAR}" "${IMAGE}" auth-gateway:latest "${CACHE_TAG}"
+    k3s ctr -n k8s.io images import "${IMAGE_TAR}"
+    rm -f "${IMAGE_TAR}"
+  fi
 fi
 
 echo "[7/8] Create/update Kubernetes Secret and apply manifests"
 bash /opt/auth-gateway/scripts/create-auth-gateway-k8s-secret.sh
+ensure_image_pull_secret
 
 wait_for_node_ready 24
 k3s kubectl apply -f "${K8S_DIR}/namespace.yaml"
