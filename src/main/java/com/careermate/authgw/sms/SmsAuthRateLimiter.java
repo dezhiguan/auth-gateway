@@ -1,6 +1,7 @@
 package com.careermate.authgw.sms;
 
 import java.time.Duration;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -58,6 +59,10 @@ public class SmsAuthRateLimiter {
         return store.getValue(key("authgw:sms:pending:code", scene, phoneHash))
                 .map(value -> value.equals(codeHash))
                 .orElse(false);
+    }
+
+    public Optional<String> getPendingProviderOutId(SmsScene scene, String phoneHash) {
+        return store.getValue(key("authgw:sms:pending:provider-out-id", scene, phoneHash));
     }
 
     public void clearPendingCode(SmsScene scene, String phoneHash) {

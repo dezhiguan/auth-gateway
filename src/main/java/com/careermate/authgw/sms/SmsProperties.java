@@ -59,6 +59,7 @@ public class SmsProperties {
         private int validMinutes = 5;
         private String endpoint = "dypnsapi.aliyuncs.com";
         private String region = "cn-hangzhou";
+        private String schemeName = "";
 
         public String getAccessKeyId() {
             return accessKeyId;
@@ -114,6 +115,14 @@ public class SmsProperties {
 
         public void setRegion(String region) {
             this.region = region;
+        }
+
+        public String getSchemeName() {
+            return schemeName;
+        }
+
+        public void setSchemeName(String schemeName) {
+            this.schemeName = schemeName;
         }
     }
 }

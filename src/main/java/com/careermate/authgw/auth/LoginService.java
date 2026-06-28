@@ -72,8 +72,9 @@ public class LoginService {
     public TokenPair loginMobile(String phone, String code, String targetAud, OAuthClient client) {
         String normalizedPhone = PhoneSupport.requireMainlandPhone(phone);
         String phoneHash = PhoneSupport.hashPhone(normalizedPhone, smsProperties.getPhoneHashPepper());
+        String providerOutId = smsRateLimiter.getPendingProviderOutId(SmsScene.LOGIN, phoneHash).orElse(null);
         MobileSmsAuthProvider.VerifyResult verifyResult = smsProvider.checkVerifyCode(
-                new MobileSmsAuthProvider.VerifyRequest(normalizedPhone, code, null, SmsScene.LOGIN));
+                new MobileSmsAuthProvider.VerifyRequest(normalizedPhone, code, providerOutId, SmsScene.LOGIN));
         if (!verifyResult.success()) {
             throw new AuthException(401, "SMS_CODE_INVALID", "验证码错误或已过期，请重新获取");
         }

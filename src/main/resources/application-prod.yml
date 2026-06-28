@@ -26,3 +26,4 @@ auth:
       valid-minutes: ${ALIYUN_SMS_TEMPLATE_VALID_MINUTES:5}
       endpoint: ${ALIYUN_SMS_ENDPOINT:dypnsapi.aliyuncs.com}
       region: ${ALIYUN_SMS_REGION:cn-hangzhou}
+      scheme-name: ${ALIYUN_SMS_SCHEME_NAME:}

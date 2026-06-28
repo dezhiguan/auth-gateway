@@ -56,9 +56,10 @@ public class RegistrationService {
         String pepper = smsProperties.getPhoneHashPepper();
         String normalizedPhone = PhoneSupport.requireMainlandPhone(phone);
         String phoneHash = PhoneSupport.hashPhone(normalizedPhone, pepper);
+        String providerOutId = smsRateLimiter.getPendingProviderOutId(SmsScene.REGISTER, phoneHash).orElse(null);
 
         MobileSmsAuthProvider.VerifyResult verify = smsProvider.checkVerifyCode(
-                new MobileSmsAuthProvider.VerifyRequest(normalizedPhone, smsCode, null, SmsScene.REGISTER));
+                new MobileSmsAuthProvider.VerifyRequest(normalizedPhone, smsCode, providerOutId, SmsScene.REGISTER));
         if (!verify.success()) {
             throw new AuthException(401, "SMS_CODE_INVALID", "验证码错误或已过期，请重新获取");
         }

@@ -100,7 +100,10 @@ public class PasswordResetService {
                 String ipHash = PhoneSupport.hashIp("password-reset", smsProperties.getPhoneHashPepper());
                 smsRateLimiter.checkSendAllowed(SmsScene.RESET, phoneHash, ipHash, PhoneSupport.maskPhone(normalizedPhone));
                 try {
-                    smsProvider.sendVerifyCode(new MobileSmsAuthProvider.SendRequest(normalizedPhone, SmsScene.RESET, code));
+                    MobileSmsAuthProvider.SendResult result = smsProvider.sendVerifyCode(
+                            new MobileSmsAuthProvider.SendRequest(normalizedPhone, SmsScene.RESET, code));
+                    String codeHash = PhoneSupport.hashCode(code, smsProperties.getPhoneHashPepper());
+                    smsRateLimiter.storePendingCode(SmsScene.RESET, phoneHash, codeHash, result.outId());
                     smsRateLimiter.recordSend(SmsScene.RESET, phoneHash, ipHash);
                 } catch (SmsException ex) {
                     throw ex;
@@ -127,8 +130,9 @@ public class PasswordResetService {
             recordConfirmFailure(user.id());
             throw new AuthException(401, "SMS_CODE_INVALID", "验证码错误或已过期，请重新获取");
         }
+        String providerOutId = smsRateLimiter.getPendingProviderOutId(SmsScene.RESET, user.phoneHash()).orElse(null);
         MobileSmsAuthProvider.VerifyResult verifyResult = smsProvider.checkVerifyCode(
-                new MobileSmsAuthProvider.VerifyRequest(normalizedPhone, code, null, SmsScene.RESET));
+                new MobileSmsAuthProvider.VerifyRequest(normalizedPhone, code, providerOutId, SmsScene.RESET));
         if (!verifyResult.success()) {
             recordConfirmFailure(user.id());
             throw new AuthException(401, "SMS_CODE_INVALID", "验证码错误或已过期，请重新获取");
