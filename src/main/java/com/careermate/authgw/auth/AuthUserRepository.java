@@ -18,7 +18,7 @@ public class AuthUserRepository {
 
     public Optional<AuthUser> findByAccount(String account) {
         List<AuthUser> users = jdbcTemplate.query("""
-                        SELECT id, phone_hash, email_hash, username, password_hash, tenant_id, platform_role, session_version, status
+                        SELECT id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status
                         FROM auth_users
                         WHERE username = ?
                         LIMIT 1
@@ -30,7 +30,7 @@ public class AuthUserRepository {
 
     public Optional<AuthUser> findByPhoneHash(String phoneHash) {
         List<AuthUser> users = jdbcTemplate.query("""
-                        SELECT id, phone_hash, email_hash, username, password_hash, tenant_id, platform_role, session_version, status
+                        SELECT id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status
                         FROM auth_users
                         WHERE phone_hash = ?
                         LIMIT 1
@@ -41,20 +41,18 @@ public class AuthUserRepository {
     }
 
     public AuthUser createMobileUser(String phoneHash) {
-        String tenantId = "tn_phone_" + phoneHash.substring(0, Math.min(16, phoneHash.length()));
         return jdbcTemplate.queryForObject("""
-                        INSERT INTO auth_users(phone_hash, tenant_id, platform_role, session_version, status, created_at)
-                        VALUES (?, ?, 'USER', 0, 'ACTIVE', now())
-                        RETURNING id, phone_hash, email_hash, username, password_hash, tenant_id, platform_role, session_version, status
+                        INSERT INTO auth_users(phone_hash, platform_role, session_version, status, created_at)
+                        VALUES (?, 'USER', 0, 'ACTIVE', now())
+                        RETURNING id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status
                         """,
                 (rs, rowNum) -> mapUser(rs),
-                phoneHash,
-                tenantId);
+                phoneHash);
     }
 
     public Optional<AuthUser> findByEmailHash(String emailHash) {
         List<AuthUser> users = jdbcTemplate.query("""
-                        SELECT id, phone_hash, email_hash, username, password_hash, tenant_id, platform_role, session_version, status
+                        SELECT id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status
                         FROM auth_users
                         WHERE email_hash = ?
                         LIMIT 1
@@ -66,14 +64,13 @@ public class AuthUserRepository {
 
     /** 全新注册：手机号为关联键，可同时带 email/username/password。 */
     public AuthUser createFullUser(String phoneHash, String emailHash, String username, String passwordHash) {
-        String tenantId = "tn_phone_" + phoneHash.substring(0, Math.min(16, phoneHash.length()));
         return jdbcTemplate.queryForObject("""
-                        INSERT INTO auth_users(phone_hash, email_hash, username, password_hash, tenant_id, platform_role, session_version, status, created_at)
-                        VALUES (?, ?, ?, ?, ?, 'USER', 0, 'ACTIVE', now())
-                        RETURNING id, phone_hash, email_hash, username, password_hash, tenant_id, platform_role, session_version, status
+                        INSERT INTO auth_users(phone_hash, email_hash, username, password_hash, platform_role, session_version, status, created_at)
+                        VALUES (?, ?, ?, ?, 'USER', 0, 'ACTIVE', now())
+                        RETURNING id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status
                         """,
                 (rs, rowNum) -> mapUser(rs),
-                phoneHash, emailHash, username, passwordHash, tenantId);
+                phoneHash, emailHash, username, passwordHash);
     }
 
     /** 补全：仅填充当前为空的字段，不覆盖已有值。 */
@@ -98,7 +95,7 @@ public class AuthUserRepository {
 
     public Optional<AuthUser> findById(long id) {
         List<AuthUser> users = jdbcTemplate.query("""
-                        SELECT id, phone_hash, email_hash, username, password_hash, tenant_id, platform_role, session_version, status
+                        SELECT id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status
                         FROM auth_users
                         WHERE id = ?
                         LIMIT 1
@@ -124,7 +121,6 @@ public class AuthUserRepository {
                 rs.getString("email_hash"),
                 rs.getString("username"),
                 rs.getString("password_hash"),
-                rs.getString("tenant_id"),
                 rs.getString("platform_role"),
                 rs.getLong("session_version"),
                 rs.getString("status"));

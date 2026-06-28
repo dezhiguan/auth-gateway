@@ -60,7 +60,6 @@ public class TokenStatusService {
         return Map.ofEntries(
                 Map.entry("sub", claims.getSubject()),
                 Map.entry("user_id", longClaim(claims, "user_id")),
-                Map.entry("tenant_id", stringClaim(claims, "tenant_id")),
                 Map.entry("principal_type", stringClaim(claims, "principal_type")),
                 Map.entry("platform_role", stringClaim(claims, "platform_role")),
                 Map.entry("rag_role", stringClaim(claims, "rag_role")),
@@ -85,7 +84,6 @@ public class TokenStatusService {
                 Map.entry("jti", claims.getJWTID()),
                 Map.entry("principal_type", stringClaim(claims, "principal_type")),
                 Map.entry("user_id", longClaim(claims, "user_id")),
-                Map.entry("tenant_id", stringClaim(claims, "tenant_id")),
                 Map.entry("platform_role", stringClaim(claims, "platform_role")),
                 Map.entry("rag_role", stringClaim(claims, "rag_role")),
                 Map.entry("scopes", listClaim(claims, "scopes")),

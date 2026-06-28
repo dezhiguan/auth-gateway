@@ -41,7 +41,6 @@ public class DevAuthDataSeeder {
                                     ELSE phone_hash
                                 END,
                                 password_hash = COALESCE(password_hash, ?),
-                                tenant_id = CASE WHEN tenant_id IS NULL OR tenant_id = '' THEN ? ELSE tenant_id END,
                                 platform_role = 'ADMIN',
                                 status = 'ACTIVE'
                             WHERE id = ?
@@ -49,7 +48,6 @@ public class DevAuthDataSeeder {
                     phoneHash,
                     phoneHash,
                     passwordHash,
-                    "tn_dev_admin",
                     adminId);
         } else {
             Long phoneUserId = findUserId(jdbcTemplate, "SELECT id FROM auth_users WHERE phone_hash = ? LIMIT 1", phoneHash);
@@ -58,25 +56,22 @@ public class DevAuthDataSeeder {
                                 UPDATE auth_users
                                 SET username = ?,
                                     password_hash = COALESCE(password_hash, ?),
-                                    tenant_id = CASE WHEN tenant_id IS NULL OR tenant_id = '' THEN ? ELSE tenant_id END,
                                     platform_role = 'ADMIN',
                                     status = 'ACTIVE'
                                 WHERE id = ?
                                 """,
                         "admin",
                         passwordHash,
-                        "tn_dev_admin",
                         phoneUserId);
                 adminId = phoneUserId;
             } else {
                 jdbcTemplate.update("""
-                                INSERT INTO auth_users(phone_hash, username, password_hash, tenant_id, platform_role, session_version, status, created_at)
-                                VALUES (?, ?, ?, ?, 'ADMIN', 0, 'ACTIVE', now())
+                                INSERT INTO auth_users(phone_hash, username, password_hash, platform_role, session_version, status, created_at)
+                                VALUES (?, ?, ?, 'ADMIN', 0, 'ACTIVE', now())
                                 """,
                         phoneHash,
                         "admin",
-                        passwordHash,
-                        "tn_dev_admin");
+                        passwordHash);
                 adminId = findUserId(jdbcTemplate, "SELECT id FROM auth_users WHERE username = ? LIMIT 1", "admin");
             }
         }

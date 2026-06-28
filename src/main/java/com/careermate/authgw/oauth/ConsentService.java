@@ -133,7 +133,6 @@ public class ConsentService {
                 .orElseThrow(() -> new AuthException(401, "USER_NOT_FOUND", "user not found"));
         String token = tokenIssuer.issueDelegationToken(
                 consent.userId(),
-                user.tenantId(),
                 consent.consentId(),
                 client,
                 requestedAudience,
