@@ -35,6 +35,11 @@ spec:
           envFrom:
             - secretRef:
                 name: auth-gateway-env
+            # 登出/改密 → webhook 吊销订阅配置（AUTH_EVENTS_SUBSCRIPTIONS_* endpoint + HMAC 密钥）。
+            # EventSubscriptionBootstrap 据此激活 event_subscriptions。
+            # secret 值不入 git，需用强随机密钥创建：见 deploy/k8s/README 或 docs。
+            - secretRef:
+                name: authgw-event-hmac
           env:
             - name: SERVER_PORT
               value: "8090"
