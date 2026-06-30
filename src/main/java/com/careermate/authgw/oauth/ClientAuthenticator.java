@@ -12,6 +12,7 @@ import com.nimbusds.jose.proc.SecurityContext;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.jwk.source.RemoteJWKSet;
 import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
 import com.nimbusds.jwt.proc.ConfigurableJWTProcessor;
 import com.nimbusds.jwt.proc.DefaultJWTProcessor;
 import java.net.URL;
@@ -67,10 +68,24 @@ public class ClientAuthenticator {
             JWSKeySelector<SecurityContext> selector = new JWSVerificationKeySelector<>(JWSAlgorithm.RS256, jwkSource);
             processor.setJWSKeySelector(selector);
             return processor.process(assertion, null);
+        } catch (AuthException ex) {
+            throw ex;
         } catch (BadJOSEException ex) {
+            if (isExpiredAssertion(assertion)) {
+                throw new AuthException(401, "CLIENT_ASSERTION_EXPIRED", "client_assertion is expired");
+            }
             throw new AuthException(401, "CLIENT_ASSERTION_INVALID", "client_assertion rejected");
         } catch (Exception ex) {
             throw new AuthException(401, "CLIENT_ASSERTION_INVALID", "client_assertion verification failed");
+        }
+    }
+
+    private boolean isExpiredAssertion(String assertion) {
+        try {
+            Date expiration = SignedJWT.parse(assertion).getJWTClaimsSet().getExpirationTime();
+            return expiration != null && expiration.before(new Date());
+        } catch (Exception ignored) {
+            return false;
         }
     }
 

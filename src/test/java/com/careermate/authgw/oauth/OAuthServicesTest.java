@@ -60,7 +60,7 @@ class OAuthServicesTest {
 
         assertThatThrownBy(() -> clientAuthenticator().authenticate("ragforge-admin-backend",
                 ClientAuthenticator.ASSERTION_TYPE, "not-a-jwt"))
-                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("CLIENT_ASSERTION_INVALID"));
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("CLIENT_JWKS_MISSING"));
     }
 
     @Test
@@ -104,6 +104,74 @@ class OAuthServicesTest {
                 TokenExchangeService.ACCESS_TOKEN_TYPE,
                 "ragforge-admin-api",
                 "rag:admin:read"))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("SCOPE_NOT_ALLOWED"));
+    }
+
+    @Test
+    void tokenExchangeRejectsUnsupportedGrantTypeAndMissingSubjectToken() {
+        OAuthClient client = client("https://example.com/jwks.json", Set.of("rag:search"));
+
+        assertThatThrownBy(() -> tokenExchangeService().exchange(client, "password",
+                "subject-token", TokenExchangeService.ACCESS_TOKEN_TYPE, "ragforge-admin-api", "rag:search"))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("GRANT_TYPE_UNSUPPORTED"));
+        assertThatThrownBy(() -> tokenExchangeService().exchange(client, TokenExchangeService.GRANT_TYPE,
+                "", TokenExchangeService.ACCESS_TOKEN_TYPE, "ragforge-admin-api", "rag:search"))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("SUBJECT_TOKEN_INVALID"));
+    }
+
+    @Test
+    void tokenExchangeRejectsClientNotAllowedForGrant() {
+        OAuthClient client = new OAuthClient("client", "client", "private_key_jwt", null,
+                Set.of("refresh_token"), Set.of("careermate-api"), Set.of("rag:search"), "ACTIVE");
+
+        assertThatThrownBy(() -> tokenExchangeService().exchange(client, TokenExchangeService.GRANT_TYPE,
+                "subject-token", TokenExchangeService.ACCESS_TOKEN_TYPE, "careermate-api", "rag:search"))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("GRANT_TYPE_DENIED"));
+    }
+
+    @Test
+    void tokenExchangeRejectsSubjectAudienceNotAllowedForClient() {
+        OAuthClient client = new OAuthClient("client", "client", "private_key_jwt", null,
+                Set.of(TokenExchangeService.GRANT_TYPE), Set.of("ragforge-admin-api"), Set.of("rag:search"), "ACTIVE");
+        JWTClaimsSet subjectClaims = new JWTClaimsSet.Builder()
+                .audience("careermate-api")
+                .claim("user_id", 12L)
+                .claim("scopes", List.of("rag:search"))
+                .build();
+        when(accessTokenVerifier.verifyToken("subject-token")).thenReturn(subjectClaims);
+
+        assertThatThrownBy(() -> tokenExchangeService().exchange(client, TokenExchangeService.GRANT_TYPE,
+                "subject-token", TokenExchangeService.ACCESS_TOKEN_TYPE, "ragforge-admin-api", "rag:search"))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("SUBJECT_AUDIENCE_DENIED"));
+    }
+
+    @Test
+    void tokenExchangeRejectsRequestedAudienceNotAllowed() {
+        OAuthClient client = client("https://example.com/jwks.json", Set.of("rag:search"));
+        JWTClaimsSet subjectClaims = new JWTClaimsSet.Builder()
+                .audience("careermate-api")
+                .claim("user_id", 12L)
+                .claim("scopes", List.of("rag:search"))
+                .build();
+        when(accessTokenVerifier.verifyToken("subject-token")).thenReturn(subjectClaims);
+
+        assertThatThrownBy(() -> tokenExchangeService().exchange(client, TokenExchangeService.GRANT_TYPE,
+                "subject-token", TokenExchangeService.ACCESS_TOKEN_TYPE, "unknown-api", "rag:search"))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("AUDIENCE_NOT_ALLOWED"));
+    }
+
+    @Test
+    void tokenExchangeRejectsScopesBeyondClientAllowedScopes() {
+        OAuthClient client = client("https://example.com/jwks.json", Set.of("rag:search"));
+        JWTClaimsSet subjectClaims = new JWTClaimsSet.Builder()
+                .audience("careermate-api")
+                .claim("user_id", 12L)
+                .claim("scopes", List.of("rag:search", "rag:admin:read"))
+                .build();
+        when(accessTokenVerifier.verifyToken("subject-token")).thenReturn(subjectClaims);
+
+        assertThatThrownBy(() -> tokenExchangeService().exchange(client, TokenExchangeService.GRANT_TYPE,
+                "subject-token", TokenExchangeService.ACCESS_TOKEN_TYPE, "ragforge-admin-api", "rag:admin:read"))
                 .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("SCOPE_NOT_ALLOWED"));
     }
 

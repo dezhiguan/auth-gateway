@@ -96,6 +96,20 @@ class PasswordResetServiceTest {
     }
 
     @Test
+    void initWrapsUnexpectedSmsProviderFailure() {
+        String phone = "+8613800000000";
+        String phoneHash = PhoneSupport.hashPhone(phone, smsProperties.getPhoneHashPepper());
+        when(userRepository.findByPhoneHash(phoneHash)).thenReturn(Optional.of(user(phoneHash)));
+        when(smsProvider.sendVerifyCode(any())).thenThrow(new RuntimeException("provider down"));
+
+        assertThatThrownBy(() -> service().init("13800000000", "13800000000"))
+                .isInstanceOfSatisfying(AuthException.class, ex -> {
+                    assertThat(ex.status()).isEqualTo(502);
+                    assertThat(ex.code()).isEqualTo("SMS_PROVIDER_ERROR");
+                });
+    }
+
+    @Test
     void verifyIssuesResetTicketWhenSmsCodeIsValid() {
         String phone = "+8613800000000";
         String phoneHash = PhoneSupport.hashPhone(phone, smsProperties.getPhoneHashPepper());
@@ -155,6 +169,21 @@ class PasswordResetServiceTest {
         assertThatThrownBy(() -> service().confirm(ticket, "short", client(), "careermate-api"))
                 .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("PASSWORD_WEAK"));
         verify(codeStore).increment("authgw:password-reset:confirm:fail:7", java.time.Duration.ofMinutes(30));
+    }
+
+    @Test
+    void confirmRejectsExpiredTicketAndSessionVersionMismatch() throws Exception {
+        RSAKey key = new RSAKeyGenerator(2048).keyID("test-kid").generate();
+        when(jwksProvider.publicJwkSet()).thenReturn(new JWKSet(key.toPublicJWK()));
+
+        String expired = signedResetTicket(key, 7, 2, Instant.now().minusSeconds(60));
+        assertThatThrownBy(() -> service().confirm(expired, "Newpass1", client(), "careermate-api"))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("RESET_TICKET_INVALID"));
+
+        String stale = signedResetTicket(key, 7, 1, Instant.now().plusSeconds(300));
+        when(userRepository.findById(7)).thenReturn(Optional.of(user("phone-hash")));
+        assertThatThrownBy(() -> service().confirm(stale, "Newpass1", client(), "careermate-api"))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("RESET_TICKET_INVALID"));
     }
 
     @Test

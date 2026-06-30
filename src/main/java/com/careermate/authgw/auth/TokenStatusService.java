@@ -52,7 +52,22 @@ public class TokenStatusService {
                         """,
                 Integer.class,
                 sessionId, userId, sessionVersion, sessionVersion);
-        return active != null && active == 1;
+        if (active == null || active != 1) {
+            return false;
+        }
+        String jti = claims.getJWTID();
+        if (!StringUtils.hasText(jti)) {
+            return true;
+        }
+        Integer revoked = jdbcTemplate.queryForObject("""
+                        SELECT COUNT(*)
+                        FROM jti_blacklist
+                        WHERE jti = ?
+                          AND expires_at > now()
+                        """,
+                Integer.class,
+                jti);
+        return revoked == null || revoked == 0;
     }
 
     public Map<String, Object> userInfo(JWTClaimsSet claims) {
