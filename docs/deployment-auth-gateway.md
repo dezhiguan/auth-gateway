@@ -6,18 +6,18 @@ Auth Gateway runs on Server 3 single-node k3s with CareerMate and RAGForge app s
 
 | Layer | Private IP | Services |
 |---|---:|---|
-| Server 1 Data | `172.25.90.183` | PostgreSQL `authdb`, Redis |
-| Server 2 Ingress | `172.19.40.32` (public jump `8.163.63.222`) | Nginx public entry `auth.careermate.cn` |
-| Server 3 App | `172.25.90.184` | k3s `auth-gateway` Deployment, NodePort `31091` |
+| Server 1 Data | `<server1-private-ip>` | PostgreSQL `authdb`, Redis |
+| Server 2 Ingress | `<server2-private-ip>` (public jump `<server2-public-ip>`) | Nginx public entry `auth.careermate.cn` |
+| Server 3 App | `<server3-private-ip>` | k3s `auth-gateway` Deployment, NodePort `31091` |
 
-CI reaches Server 3 by SSH `ProxyJump` through the Server 2 ingress host (default `8.163.63.222`).
+CI reaches Server 3 by SSH `ProxyJump` through the Server 2 ingress host (default `<server2-public-ip>`).
 
 Public traffic:
 
 ```text
 auth.careermate.cn
   -> Server 2 ragforge-nginx container
-  -> Server 3 172.25.90.184:31091
+  -> Server 3 <server3-private-ip>:31091
   -> k3s Service auth-gateway
   -> 2 auth-gateway Pods
 ```
@@ -53,10 +53,10 @@ psql -h 127.0.0.1 -U postgres -f deploy/sql/init-authdb.sql.example
 Production values:
 
 ```bash
-AUTH_DB_URL=jdbc:postgresql://172.25.90.183:5432/authdb
+AUTH_DB_URL=jdbc:postgresql://<server1-private-ip>:5432/authdb
 AUTH_DB_USERNAME=auth
 AUTH_DB_PASSWORD=<server-local-secret>
-SPRING_DATA_REDIS_HOST=172.25.90.183
+SPRING_DATA_REDIS_HOST=<server1-private-ip>
 SPRING_DATA_REDIS_PORT=6379
 ```
 
@@ -113,10 +113,10 @@ The container image uses `eclipse-temurin:21-jre-jammy` and runs as UID/GID `100
 
 ```bash
 SPRING_PROFILES_ACTIVE=prod
-AUTH_DB_URL=jdbc:postgresql://172.25.90.183:5432/authdb
+AUTH_DB_URL=jdbc:postgresql://<server1-private-ip>:5432/authdb
 AUTH_DB_USERNAME=auth
 AUTH_DB_PASSWORD=<secret>
-SPRING_DATA_REDIS_HOST=172.25.90.183
+SPRING_DATA_REDIS_HOST=<server1-private-ip>
 SPRING_DATA_REDIS_PORT=6379
 AUTH_ISSUER=https://auth.careermate.cn
 AUTH_TOKEN_ENDPOINT_AUDIENCE=https://auth.careermate.cn/oauth/token
@@ -163,7 +163,7 @@ Required repository secrets:
 | `ACR_USERNAME` | ACR login username |
 | `ACR_PASSWORD` | ACR login password (also used to create the in-cluster `acr-pull-secret`) |
 | `AUTH_GATEWAY_APP_SSH_KEY` | SSH private key for Server 3 deploy |
-| `AUTH_GATEWAY_APP_HOST` | Server 3 host, usually `172.25.90.184` if reachable through jump host |
+| `AUTH_GATEWAY_APP_HOST` | Server 3 host, usually `<server3-private-ip>` if reachable through jump host |
 | `AUTH_GATEWAY_APP_USER` | SSH user on Server 3, optional if root fallback is acceptable |
 | `AUTH_GATEWAY_APP_PORT` | SSH port, optional, defaults to `22` |
 | `CAREERMATE_INGRESS_HOST` | Server 2 jump host |
@@ -217,7 +217,7 @@ Server 2 Nginx should route `auth.careermate.cn` to Server 3 k3s NodePort:
 
 ```nginx
 upstream auth_gateway_backend {
-    server 172.25.90.184:31091;
+    server <server3-private-ip>:31091;
 }
 
 server {
@@ -337,5 +337,5 @@ Delivery uses HTTP POST with JSON envelope and HMAC headers:
 - `/opt/auth-gateway/deploy/k8s/auth-gateway/{namespace,deployment,service}.yaml` are present on Server 3.
 - GitHub Actions secrets are configured.
 - Active `event_subscriptions` rows use real HMAC secrets, not empty strings or `<TBD...>` placeholders.
-- Nginx routes `auth.careermate.cn` to `172.25.90.184:31091`.
+- Nginx routes `auth.careermate.cn` to `<server3-private-ip>:31091`.
 - Public `/.well-known/jwks.json` returns `keys`.

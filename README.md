@@ -36,7 +36,7 @@ Auth Gateway 是 CareerMate 与 RAGForge 共用的统一身份与令牌服务。
                     │  Server 2 入口        │  Nginx 反向代理
                     │  ragforge-nginx       │  (公网入口 / 跳板)
                     └──────────┬───────────┘
-                               │  NodePort 31091
+                               │  NodePort
                     ┌──────────▼───────────┐
                     │  Server 3 应用层       │  k3s
                     │  Deployment×2 Pod      │  auth-gateway:8090
@@ -44,19 +44,19 @@ Auth Gateway 是 CareerMate 与 RAGForge 共用的统一身份与令牌服务。
                                │
                     ┌──────────▼───────────┐
                     │  Server 1 数据层       │  PostgreSQL authdb
-                    │  172.25.90.183         │  Redis
+                    │  (内网)                │  Redis
                     └──────────────────────┘
 
    认证事件 (HTTP + HMAC-SHA256) ──► RAGForge / CareerMate 订阅端
 ```
 
-| 层 | 私网地址 | 组件 |
+| 层 | 节点 | 组件 |
 |---|---|---|
-| Server 1 数据层 | `172.25.90.183` | PostgreSQL `authdb`、Redis |
-| Server 2 入口层 | `172.19.40.32`（公网跳板 `8.163.63.222`） | Nginx 公网入口 `auth.careermate.cn` |
-| Server 3 应用层 | `172.25.90.184` | k3s `auth-gateway` Deployment，NodePort `31091` |
+| Server 1 数据层 | 内网节点 | PostgreSQL `authdb`、Redis |
+| Server 2 入口层 | 公网入口 / 跳板 | Nginx 公网入口 `auth.careermate.cn` |
+| Server 3 应用层 | 内网节点 | k3s `auth-gateway` Deployment，集群内 NodePort |
 
-详细部署步骤见 [docs/deployment-auth-gateway.md](docs/deployment-auth-gateway.md)。
+> 具体内网地址、NodePort、跳板机等基础设施细节见私有部署文档,不在公开仓库中披露。详细部署步骤见 [docs/deployment-auth-gateway.md](docs/deployment-auth-gateway.md)。
 
 ## 核心能力
 

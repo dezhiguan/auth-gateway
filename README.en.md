@@ -36,7 +36,7 @@ Production runs on a single-node k3s cluster alongside the CareerMate and RAGFor
                     │  Server 2 Ingress     │  Nginx reverse proxy
                     │  ragforge-nginx       │  (public entry / jump)
                     └──────────┬───────────┘
-                               │  NodePort 31091
+                               │  NodePort
                     ┌──────────▼───────────┐
                     │  Server 3 App tier    │  k3s
                     │  Deployment ×2 Pods   │  auth-gateway:8090
@@ -44,19 +44,19 @@ Production runs on a single-node k3s cluster alongside the CareerMate and RAGFor
                                │
                     ┌──────────▼───────────┐
                     │  Server 1 Data tier   │  PostgreSQL authdb
-                    │  172.25.90.183        │  Redis
+                    │  (private)            │  Redis
                     └──────────────────────┘
 
    Auth events (HTTP + HMAC-SHA256) ──► RAGForge / CareerMate subscribers
 ```
 
-| Tier | Private IP | Components |
+| Tier | Node | Components |
 |---|---|---|
-| Server 1 Data | `172.25.90.183` | PostgreSQL `authdb`, Redis |
-| Server 2 Ingress | `172.19.40.32` (public jump `8.163.63.222`) | Nginx public entry `auth.careermate.cn` |
-| Server 3 App | `172.25.90.184` | k3s `auth-gateway` Deployment, NodePort `31091` |
+| Server 1 Data | private node | PostgreSQL `authdb`, Redis |
+| Server 2 Ingress | public entry / jump | Nginx public entry `auth.careermate.cn` |
+| Server 3 App | private node | k3s `auth-gateway` Deployment, cluster NodePort |
 
-See [docs/deployment-auth-gateway.md](docs/deployment-auth-gateway.md) for the full deployment guide.
+> Concrete private addresses, NodePort, and jump-host details live in the private deployment doc and are not disclosed in this public repo. See [docs/deployment-auth-gateway.md](docs/deployment-auth-gateway.md) for the full deployment guide.
 
 ## Capabilities
 
