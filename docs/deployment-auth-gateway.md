@@ -7,8 +7,10 @@ Auth Gateway runs on Server 3 single-node k3s with CareerMate and RAGForge app s
 | Layer | Private IP | Services |
 |---|---:|---|
 | Server 1 Data | `172.25.90.183` | PostgreSQL `authdb`, Redis |
-| Server 2 Ingress | `172.19.40.32` | Nginx public entry `auth.careermate.cn` |
+| Server 2 Ingress | `172.19.40.32` (public jump `8.163.63.222`) | Nginx public entry `auth.careermate.cn` |
 | Server 3 App | `172.25.90.184` | k3s `auth-gateway` Deployment, NodePort `31091` |
+
+CI reaches Server 3 by SSH `ProxyJump` through the Server 2 ingress host (default `8.163.63.222`).
 
 Public traffic:
 
@@ -101,7 +103,7 @@ Expected layout:
   auth-gateway.env
 ```
 
-Server 3 must have Docker and k3s installed. The deploy script builds the Docker image on Server 3, imports it into k3s containerd, then rolls the k3s Deployment.
+Server 3 must have Docker and k3s installed. In the default (ACR) flow, CI builds and pushes the image to Aliyun ACR and Server 3 pulls it; the deploy script then rolls the k3s Deployment. The legacy local-build path (build on Server 3 and import into k3s containerd) is retained as an offline fallback via `USE_REMOTE_IMAGE=0` in `deploy-from-github.sh`.
 
 The container image uses `eclipse-temurin:21-jre-jammy` and runs as UID/GID `10001:10001`.
 
@@ -157,6 +159,9 @@ Required repository secrets:
 
 | Secret | Description |
 |---|---|
+| `ACR_REGISTRY` | Aliyun ACR registry/repo, e.g. `registry-vpc.<region>.aliyuncs.com/<ns>/auth-gateway` (the VPC host is rewritten to the public host for push) |
+| `ACR_USERNAME` | ACR login username |
+| `ACR_PASSWORD` | ACR login password (also used to create the in-cluster `acr-pull-secret`) |
 | `AUTH_GATEWAY_APP_SSH_KEY` | SSH private key for Server 3 deploy |
 | `AUTH_GATEWAY_APP_HOST` | Server 3 host, usually `172.25.90.184` if reachable through jump host |
 | `AUTH_GATEWAY_APP_USER` | SSH user on Server 3, optional if root fallback is acceptable |
@@ -182,9 +187,9 @@ On pull request:
 On push to `main`:
 
 1. Build and test.
-2. Upload JAR, Dockerfile, scripts, and k8s manifests to Server 3.
-3. Build Docker image on Server 3.
-4. Import the image into k3s containerd.
+2. Build the Docker image in GitHub Actions and push it to Aliyun ACR, tagged `auth-<sha12>`.
+3. Upload JAR, Dockerfile, scripts, and k8s manifests to Server 3 over the SSH jump.
+4. Server 3 pulls the image from ACR (`deploy-from-github.sh` with `USE_REMOTE_IMAGE=1`) and ensures the `acr-pull-secret` imagePullSecret. (Fallback: with `USE_REMOTE_IMAGE=0` it builds locally and imports into k3s containerd.)
 5. Create/update `auth-gateway-env` Secret from `/opt/shared/env/common.env` and `/opt/shared/env/auth-gateway.env`.
 6. Apply namespace, service, deployment.
 7. Roll out 2 Pods.
@@ -264,8 +269,12 @@ Main public/internal endpoints:
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /auth/login/password` | Password login, returns access/refresh token pair |
+| `POST /auth/login/password` | Password login (account = username/phone/email), returns access/refresh token pair |
 | `POST /auth/login/mobile` | SMS login, returns access/refresh token pair |
+| `POST /auth/register` | Register / complete a phone-keyed account |
+| `POST /auth/credential/set-password` | Set/change password (Bearer) |
+| `POST /auth/credential/bind-email` | Bind email (Bearer) |
+| `POST /auth/credential/set-username` | Set username (Bearer) |
 | `POST /auth/sms/send` | Send SMS verification code |
 | `POST /auth/token/refresh` | Rotate refresh token |
 | `POST /auth/logout` | Revoke current session |
@@ -280,6 +289,7 @@ Main public/internal endpoints:
 | `POST /oauth/delegation-token` | Issue agent delegation token from consent |
 | `GET /userinfo` | Return user token metadata |
 | `POST /oauth/introspect` | Token introspection |
+| `POST /internal/users/resolve-by-phone` | Exact resolve-by-phone for downstream invites (authorized clients only) |
 | `GET /.well-known/jwks.json` | Public JWKS |
 | `GET /actuator/health` | Health probe |
 
