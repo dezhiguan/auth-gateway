@@ -38,6 +38,16 @@ class SmsAuthRateLimiterTest {
     }
 
     @Test
+    void checkSendAllowedRejectsIpMinuteLimit() {
+        when(store.getValue("authgw:sms:send:cooldown:bind_phone:phone")).thenReturn(Optional.empty());
+        when(store.getCounter("authgw:sms:send:day:bind_phone:phone")).thenReturn(0L);
+        when(store.getCounter("authgw:sms:send:ip:minute:bind_phone:ip")).thenReturn(30L);
+
+        assertThatThrownBy(() -> limiter().checkSendAllowed(SmsScene.BIND_PHONE, "phone", "ip", "138****0000"))
+                .isInstanceOfSatisfying(SmsException.class, ex -> assertThat(ex.code()).isEqualTo("SMS_IP_MINUTE_LIMITED"));
+    }
+
+    @Test
     void recordSendWritesCooldownAndCounters() {
         limiter().recordSend(SmsScene.REGISTER, "phone", "ip");
 
@@ -56,6 +66,27 @@ class SmsAuthRateLimiterTest {
         when(store.getValue("authgw:sms:pending:code:login:phone")).thenReturn(Optional.of("code-hash"));
         assertThat(limiter.matchesPendingCode(SmsScene.LOGIN, "phone", "code-hash")).isTrue();
         assertThat(limiter.matchesPendingCode(SmsScene.LOGIN, "phone", "bad")).isFalse();
+    }
+
+    @Test
+    void storePendingCodeStoresProviderOutIdAndCanReadIt() {
+        SmsAuthRateLimiter limiter = limiter();
+
+        limiter.storePendingCode(SmsScene.RESET, "phone", "code-hash", "out-1");
+
+        verify(store).setValue("authgw:sms:pending:code:reset:phone", "code-hash", Duration.ofMinutes(5));
+        verify(store).setValue("authgw:sms:pending:provider-out-id:reset:phone", "out-1", Duration.ofMinutes(5));
+        when(store.getValue("authgw:sms:pending:provider-out-id:reset:phone")).thenReturn(Optional.of("out-1"));
+        assertThat(limiter.getPendingProviderOutId(SmsScene.RESET, "phone")).contains("out-1");
+    }
+
+    @Test
+    void sendCooldownRemainingSecondsReturnsStoreTtlOrZero() {
+        when(store.getRemainingTtlSeconds("authgw:sms:send:cooldown:login:phone")).thenReturn(Optional.of(42L));
+        assertThat(limiter().sendCooldownRemainingSeconds(SmsScene.LOGIN, "phone")).isEqualTo(42L);
+
+        when(store.getRemainingTtlSeconds("authgw:sms:send:cooldown:reset:phone")).thenReturn(Optional.empty());
+        assertThat(limiter().sendCooldownRemainingSeconds(SmsScene.RESET, "phone")).isZero();
     }
 
     @Test
