@@ -69,6 +69,70 @@ class TokenServiceTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void refreshRejectsExpiredToken() throws Exception {
+        when(tokenHasher.sha256Hex("refresh-token")).thenReturn("hash");
+        when(jdbcTemplate.query(anyString(), any(ResultSetExtractor.class), any())).thenAnswer(invocation -> {
+            ResultSetExtractor<?> extractor = invocation.getArgument(1);
+            when(resultSet.next()).thenReturn(true);
+            refreshRow(Timestamp.from(Instant.now().minusSeconds(60)), null, null, null, "careermate-api");
+            return extractor.extractData(resultSet);
+        });
+
+        assertThatThrownBy(() -> tokenService().refresh("refresh-token", client()))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("REFRESH_TOKEN_INVALID"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void refreshRejectsRevokedToken() throws Exception {
+        when(tokenHasher.sha256Hex("refresh-token")).thenReturn("hash");
+        when(jdbcTemplate.query(anyString(), any(ResultSetExtractor.class), any())).thenAnswer(invocation -> {
+            ResultSetExtractor<?> extractor = invocation.getArgument(1);
+            when(resultSet.next()).thenReturn(true);
+            refreshRow(Timestamp.from(Instant.now().plusSeconds(60)), null, Timestamp.from(Instant.now()), null, "careermate-api");
+            return extractor.extractData(resultSet);
+        });
+
+        assertThatThrownBy(() -> tokenService().refresh("refresh-token", client()))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("REFRESH_TOKEN_INVALID"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void refreshRejectsRevokedSession() throws Exception {
+        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 4, "ACTIVE");
+        when(tokenHasher.sha256Hex("refresh-token")).thenReturn("hash");
+        when(jdbcTemplate.query(anyString(), any(ResultSetExtractor.class), any())).thenAnswer(invocation -> {
+            ResultSetExtractor<?> extractor = invocation.getArgument(1);
+            when(resultSet.next()).thenReturn(true);
+            refreshRow(Timestamp.from(Instant.now().plusSeconds(60)), null, null, Timestamp.from(Instant.now()), "careermate-api");
+            return extractor.extractData(resultSet);
+        });
+        when(userRepository.findById(12)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> tokenService().refresh("refresh-token", client()))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("REFRESH_SESSION_REVOKED"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void refreshRejectsSessionVersionMismatch() throws Exception {
+        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 9, "ACTIVE");
+        when(tokenHasher.sha256Hex("refresh-token")).thenReturn("hash");
+        when(jdbcTemplate.query(anyString(), any(ResultSetExtractor.class), any())).thenAnswer(invocation -> {
+            ResultSetExtractor<?> extractor = invocation.getArgument(1);
+            when(resultSet.next()).thenReturn(true);
+            refreshRow(Timestamp.from(Instant.now().plusSeconds(60)), null, null, null, "careermate-api");
+            return extractor.extractData(resultSet);
+        });
+        when(userRepository.findById(12)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> tokenService().refresh("refresh-token", client()))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("REFRESH_SESSION_REVOKED"));
+    }
+
+    @Test
     void logoutRequiresSessionId() {
         JWTClaimsSet claims = new JWTClaimsSet.Builder().claim("user_id", 12L).build();
 

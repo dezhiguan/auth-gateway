@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -73,6 +74,29 @@ class AuthCoreServicesTest {
     }
 
     @Test
+    void loginPasswordRejectsInactiveUser() {
+        AuthUser user = user(7, "hash", "alice", "pwd-hash", "ADMIN", 2, "DISABLED");
+        when(codeStore.getValue("authgw:login:password:lock:alice")).thenReturn(Optional.empty());
+        when(userRepository.findByAccount("alice")).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> loginService().loginPassword("alice", "secret", "careermate-api", client()))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("BAD_CREDENTIALS"));
+        verify(tokenIssuer, never()).issueUserTokens(any(), any(), anyString());
+    }
+
+    @Test
+    void loginPasswordRejectsRagforgeWhenMembershipMissing() {
+        AuthUser user = user(7, "hash", "alice", "pwd-hash", "USER", 2, "ACTIVE");
+        when(codeStore.getValue("authgw:login:password:lock:alice")).thenReturn(Optional.empty());
+        when(userRepository.findByAccount("alice")).thenReturn(Optional.of(user));
+        when(passwordHasher.matches("secret", "pwd-hash")).thenReturn(true);
+        when(membershipRepository.find(7, "ragforge")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> loginService().loginPassword("alice", "secret", "ragforge-admin-api", client()))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("RAGFORGE_ACCESS_DENIED"));
+    }
+
+    @Test
     void loginMobileCreatesUserWhenPhoneDoesNotExist() {
         String phone = "+8613800000000";
         String phoneHash = PhoneSupport.hashPhone(phone, smsProperties.getPhoneHashPepper());
@@ -87,6 +111,31 @@ class AuthCoreServicesTest {
 
         assertThat(loginService().loginMobile("13800000000", "123456", "careermate-api", client)).isSameAs(pair);
         verify(smsRateLimiter).clearPendingCode(SmsScene.LOGIN, phoneHash);
+    }
+
+    @Test
+    void loginMobileRejectsInvalidSmsCode() {
+        String phone = "+8613800000000";
+        String phoneHash = PhoneSupport.hashPhone(phone, smsProperties.getPhoneHashPepper());
+        when(smsRateLimiter.getPendingProviderOutId(SmsScene.LOGIN, phoneHash)).thenReturn(Optional.empty());
+        when(smsProvider.checkVerifyCode(any())).thenReturn(new MobileSmsAuthProvider.VerifyResult(false, phone, "req-1", "BAD", "bad", "FAIL"));
+
+        assertThatThrownBy(() -> loginService().loginMobile("13800000000", "000000", "careermate-api", client()))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("SMS_CODE_INVALID"));
+        verify(userRepository, never()).findByPhoneHash(anyString());
+    }
+
+    @Test
+    void loginMobileRejectsInactiveUser() {
+        String phone = "+8613800000000";
+        String phoneHash = PhoneSupport.hashPhone(phone, smsProperties.getPhoneHashPepper());
+        AuthUser disabled = user(9, phoneHash, null, null, "USER", 0, "DISABLED");
+        when(smsRateLimiter.getPendingProviderOutId(SmsScene.LOGIN, phoneHash)).thenReturn(Optional.empty());
+        when(smsProvider.checkVerifyCode(any())).thenReturn(new MobileSmsAuthProvider.VerifyResult(true, phone, "req-1", "OK", "ok", "PASS"));
+        when(userRepository.findByPhoneHash(phoneHash)).thenReturn(Optional.of(disabled));
+
+        assertThatThrownBy(() -> loginService().loginMobile("13800000000", "123456", "careermate-api", client()))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("USER_NOT_FOUND"));
     }
 
     @Test
@@ -118,6 +167,25 @@ class AuthCoreServicesTest {
 
         assertThatThrownBy(() -> registrationService().register("13800000000", "123456", "amy", null, "password", "ragforge"))
                 .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("PASSWORD_WEAK"));
+    }
+
+    @Test
+    void registerEnrichesExistingPhoneWithoutOverwritingExistingFields() {
+        String phone = "+8613800000000";
+        String phoneHash = PhoneSupport.hashPhone(phone, smsProperties.getPhoneHashPepper());
+        AuthUser existing = new AuthUser(15, phoneHash, "existing-email", "existing_user", null, "USER", 1, "ACTIVE");
+        when(smsRateLimiter.getPendingProviderOutId(SmsScene.REGISTER, phoneHash)).thenReturn(Optional.empty());
+        when(smsProvider.checkVerifyCode(any())).thenReturn(new MobileSmsAuthProvider.VerifyResult(true, phone, "req-1", "OK", "ok", "PASS"));
+        when(passwordHasher.hash("Passw0rd")).thenReturn("pwd-hash");
+        when(userRepository.findByPhoneHash(phoneHash)).thenReturn(Optional.of(existing));
+
+        RegistrationService.RegisterResult result = registrationService()
+                .register("13800000000", "123456", "new_user", "new@example.com", "Passw0rd", "careermate");
+
+        assertThat(result.userId()).isEqualTo(15);
+        assertThat(result.linked()).isTrue();
+        verify(userRepository).enrich(15, null, null, "pwd-hash");
+        verify(membershipRepository).ensureMembership(15, "careermate", "USER");
     }
 
     @Test
