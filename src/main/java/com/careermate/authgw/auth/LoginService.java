@@ -52,6 +52,10 @@ public class LoginService {
     }
 
     public TokenPair loginPassword(String account, String password, String targetAud, OAuthClient client) {
+        return loginPassword(account, password, targetAud, client, false);
+    }
+
+    public TokenPair loginPassword(String account, String password, String targetAud, OAuthClient client, boolean remember) {
         String key = "authgw:login:password:fail:" + account;
         if (bucketStore.getValue(lockKey(account)).isPresent()) {
             throw new AuthException(423, "CAPTCHA_REQUIRED", "登录失败次数较多，请稍后再试");
@@ -65,11 +69,16 @@ public class LoginService {
         bucketStore.delete(key);
 
         enforceRagForgeAccess(targetAud, user);
-        auditLogService.info("login.password.success", user.id(), client.clientId(), java.util.Map.of("target_aud", targetAud));
-        return tokenIssuer.issueUserTokens(user, client, targetAud);
+        auditLogService.info("login.password.success", user.id(), client.clientId(),
+                java.util.Map.of("target_aud", targetAud, "remember", remember));
+        return tokenIssuer.issueUserTokens(user, client, targetAud, remember);
     }
 
     public TokenPair loginMobile(String phone, String code, String targetAud, OAuthClient client) {
+        return loginMobile(phone, code, targetAud, client, false);
+    }
+
+    public TokenPair loginMobile(String phone, String code, String targetAud, OAuthClient client, boolean remember) {
         String normalizedPhone = PhoneSupport.requireMainlandPhone(phone);
         String phoneHash = PhoneSupport.hashPhone(normalizedPhone, smsProperties.getPhoneHashPepper());
         String providerOutId = smsRateLimiter.getPendingProviderOutId(SmsScene.LOGIN, phoneHash).orElse(null);
@@ -87,8 +96,9 @@ public class LoginService {
         }
 
         enforceRagForgeAccess(targetAud, user);
-        auditLogService.info("login.mobile.success", user.id(), client.clientId(), java.util.Map.of("target_aud", targetAud, "phone", phone));
-        return tokenIssuer.issueUserTokens(user, client, targetAud);
+        auditLogService.info("login.mobile.success", user.id(), client.clientId(),
+                java.util.Map.of("target_aud", targetAud, "phone", phone, "remember", remember));
+        return tokenIssuer.issueUserTokens(user, client, targetAud, remember);
     }
 
     /**

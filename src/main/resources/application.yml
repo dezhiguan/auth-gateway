@@ -36,6 +36,10 @@ auth:
   token-endpoint-audience: ${AUTH_TOKEN_ENDPOINT_AUDIENCE:https://auth.careermate.cn/oauth/token}
   access-token-ttl-seconds: ${AUTH_ACCESS_TOKEN_TTL_SECONDS:900}
   refresh-token-ttl-seconds: ${AUTH_REFRESH_TOKEN_TTL_SECONDS:604800}
+  # 勾选"记住我"时 refresh token TTL（默认 30 天，滑动窗口）
+  remember-refresh-ttl-seconds: ${AUTH_REMEMBER_REFRESH_TTL_SECONDS:2592000}
+  # 旋转宽限期：窗口内旧 refresh token 复用视作并发双刷补发令牌，0=严格一次性
+  refresh-rotation-grace-seconds: ${AUTH_REFRESH_ROTATION_GRACE_SECONDS:60}
   exchange-token-ttl-seconds: ${AUTH_EXCHANGE_TOKEN_TTL_SECONDS:600}
   events:
     dev-allow-empty-secret: false

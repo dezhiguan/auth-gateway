@@ -42,7 +42,7 @@ class TokenIssuerTest {
         verify(jdbcTemplate).update(org.mockito.ArgumentMatchers.contains("INSERT INTO auth_sessions"),
                 org.mockito.ArgumentMatchers.startsWith("sid_"), org.mockito.ArgumentMatchers.eq(12L),
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq("ragforge-admin-api"),
-                org.mockito.ArgumentMatchers.eq(4L));
+                org.mockito.ArgumentMatchers.eq(4L), org.mockito.ArgumentMatchers.eq(604800L));
         verify(jdbcTemplate).update(org.mockito.ArgumentMatchers.contains("INSERT INTO refresh_tokens"),
                 org.mockito.ArgumentMatchers.eq("refresh-hash"), org.mockito.ArgumentMatchers.startsWith("rtf_"),
                 org.mockito.ArgumentMatchers.startsWith("sid_"), any());
@@ -58,7 +58,7 @@ class TokenIssuerTest {
         AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 4, "ACTIVE");
 
         assertThatThrownBy(() -> issuer().issueRotatedRefresh(user, client(Set.of("careermate-api")),
-                "ragforge-admin-api", "sid", "family"))
+                "ragforge-admin-api", "sid", "family", 604800))
                 .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("AUDIENCE_NOT_ALLOWED"));
     }
 

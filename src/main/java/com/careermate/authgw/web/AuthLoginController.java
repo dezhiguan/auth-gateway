@@ -32,12 +32,14 @@ public class AuthLoginController {
             @RequestParam String account,
             @RequestParam String password,
             @RequestParam("target_aud") String targetAud,
+            @RequestParam(name = "remember", required = false, defaultValue = "false") boolean remember,
             @RequestParam(name = "client_id", required = false) String clientId,
             @RequestParam(name = "client_assertion_type", required = false) String clientAssertionType,
             @RequestParam(name = "client_assertion", required = false) String clientAssertion) {
         OAuthClient client = clientAuthenticator.authenticate(clientId, clientAssertionType, clientAssertion);
-        TokenPair tokens = loginService.loginPassword(account, password, targetAud, client);
-        return new LoginResponse(tokens.accessToken(), tokens.refreshToken(), tokens.tokenType(), tokens.expiresIn());
+        TokenPair tokens = loginService.loginPassword(account, password, targetAud, client, remember);
+        return new LoginResponse(
+                tokens.accessToken(), tokens.refreshToken(), tokens.tokenType(), tokens.expiresIn(), tokens.refreshExpiresIn());
     }
 
     @PostMapping(value = "/auth/login/mobile", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
@@ -45,12 +47,14 @@ public class AuthLoginController {
             @RequestParam String phone,
             @RequestParam String code,
             @RequestParam("target_aud") String targetAud,
+            @RequestParam(name = "remember", required = false, defaultValue = "false") boolean remember,
             @RequestParam(name = "client_id", required = false) String clientId,
             @RequestParam(name = "client_assertion_type", required = false) String clientAssertionType,
             @RequestParam(name = "client_assertion", required = false) String clientAssertion) {
         OAuthClient client = clientAuthenticator.authenticate(clientId, clientAssertionType, clientAssertion);
-        TokenPair tokens = loginService.loginMobile(phone, code, targetAud, client);
-        return new LoginResponse(tokens.accessToken(), tokens.refreshToken(), tokens.tokenType(), tokens.expiresIn());
+        TokenPair tokens = loginService.loginMobile(phone, code, targetAud, client, remember);
+        return new LoginResponse(
+                tokens.accessToken(), tokens.refreshToken(), tokens.tokenType(), tokens.expiresIn(), tokens.refreshExpiresIn());
     }
 
     @ExceptionHandler(AuthException.class)
@@ -69,11 +73,12 @@ public class AuthLoginController {
                 .body(Map.of("error", ex.code(), "message", ex.getMessage()));
     }
 
-    @JsonPropertyOrder({"access_token", "refresh_token", "token_type", "expires_in"})
+    @JsonPropertyOrder({"access_token", "refresh_token", "token_type", "expires_in", "refresh_expires_in"})
     public record LoginResponse(
             @JsonProperty("access_token") String accessToken,
             @JsonProperty("refresh_token") String refreshToken,
             @JsonProperty("token_type") String tokenType,
-            @JsonProperty("expires_in") long expiresIn) {
+            @JsonProperty("expires_in") long expiresIn,
+            @JsonProperty("refresh_expires_in") long refreshExpiresIn) {
     }
 }

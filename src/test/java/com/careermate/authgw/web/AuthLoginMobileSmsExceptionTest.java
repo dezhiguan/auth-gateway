@@ -43,7 +43,7 @@ class AuthLoginMobileSmsExceptionTest {
                         Set.of("ragforge-admin-api"),
                         Set.of("rag:admin:read"),
                         "ACTIVE"));
-        when(loginService.loginMobile(anyString(), anyString(), anyString(), any()))
+        when(loginService.loginMobile(anyString(), anyString(), anyString(), any(), org.mockito.ArgumentMatchers.anyBoolean()))
                 .thenThrow(new SmsException(502, "SMS_PROVIDER_ERROR", "验证码暂时无法校验，请稍后再试"));
 
         mockMvc.perform(post("/auth/login/mobile")

@@ -18,6 +18,7 @@ public class TokenService {
     private final AuthUserRepository userRepository;
     private final PasswordHasher passwordHasher;
     private final EventPublisher eventPublisher;
+    private final AuthProperties properties;
 
     public TokenService(
             JdbcTemplate jdbcTemplate,
@@ -25,23 +26,20 @@ public class TokenService {
             TokenIssuer tokenIssuer,
             AuthUserRepository userRepository,
             PasswordHasher passwordHasher,
-            EventPublisher eventPublisher) {
+            EventPublisher eventPublisher,
+            AuthProperties properties) {
         this.jdbcTemplate = jdbcTemplate;
         this.tokenHasher = tokenHasher;
         this.tokenIssuer = tokenIssuer;
         this.userRepository = userRepository;
         this.passwordHasher = passwordHasher;
         this.eventPublisher = eventPublisher;
+        this.properties = properties;
     }
 
     @Transactional(noRollbackFor = AuthException.class)
     public TokenPair refresh(String refreshToken, OAuthClient client) {
         RefreshRecord refresh = findRefresh(refreshToken);
-        if (refresh.rotatedAt() != null) {
-            eventPublisher.publish("refresh.replay_detected", Map.of("family_id", refresh.familyId()));
-            revokeFamily(refresh.familyId());
-            throw new AuthException(401, "REFRESH_REPLAY_DETECTED", "refresh token replay detected");
-        }
         if (refresh.revokedAt() != null || refresh.expired()) {
             throw new AuthException(401, "REFRESH_TOKEN_INVALID", "refresh token is invalid");
         }
@@ -52,6 +50,19 @@ public class TokenService {
             throw new AuthException(401, "REFRESH_SESSION_REVOKED", "refresh session is revoked");
         }
 
+        // 旋转宽限期：已旋转的 token 在窗口内被再次使用，视作并发双刷（多标签页同时 401、
+        // 弱网重试），补发一对新令牌而不按重放灭族；超出窗口才是真正的重放攻击。
+        if (refresh.rotatedAt() != null) {
+            if (!withinRotationGrace(refresh.rotatedAt())) {
+                eventPublisher.publish("refresh.replay_detected", Map.of("family_id", refresh.familyId()));
+                revokeFamily(refresh.familyId());
+                throw new AuthException(401, "REFRESH_REPLAY_DETECTED", "refresh token replay detected");
+            }
+            eventPublisher.publish("refresh.grace_reuse", Map.of("family_id", refresh.familyId()));
+            return tokenIssuer.issueRotatedRefresh(
+                    user, client, refresh.audience(), refresh.sessionId(), refresh.familyId(), refreshTtl(refresh));
+        }
+
         int rotated = jdbcTemplate.update("""
                         UPDATE refresh_tokens
                         SET rotated_at = now()
@@ -59,12 +70,29 @@ public class TokenService {
                         """,
                 tokenHasher.sha256Hex(refreshToken));
         if (rotated == 0) {
-            eventPublisher.publish("refresh.replay_detected", Map.of("family_id", refresh.familyId()));
-            revokeFamily(refresh.familyId());
-            throw new AuthException(401, "REFRESH_REPLAY_DETECTED", "refresh token replay detected");
+            // 读到时未旋转、更新时已被旋转 = 毫秒级并发竞争，必然落在宽限期内，按双刷补发。
+            if (properties.getRefreshRotationGraceSeconds() <= 0) {
+                eventPublisher.publish("refresh.replay_detected", Map.of("family_id", refresh.familyId()));
+                revokeFamily(refresh.familyId());
+                throw new AuthException(401, "REFRESH_REPLAY_DETECTED", "refresh token replay detected");
+            }
+            eventPublisher.publish("refresh.grace_reuse", Map.of("family_id", refresh.familyId()));
         }
 
-        return tokenIssuer.issueRotatedRefresh(user, client, refresh.audience(), refresh.sessionId(), refresh.familyId());
+        return tokenIssuer.issueRotatedRefresh(
+                user, client, refresh.audience(), refresh.sessionId(), refresh.familyId(), refreshTtl(refresh));
+    }
+
+    private boolean withinRotationGrace(java.time.Instant rotatedAt) {
+        long grace = properties.getRefreshRotationGraceSeconds();
+        return grace > 0 && rotatedAt.plusSeconds(grace).isAfter(java.time.Instant.now());
+    }
+
+    /** 会话级 refresh TTL（记住我=30天），历史会话无该字段时回退默认值。 */
+    private long refreshTtl(RefreshRecord refresh) {
+        return refresh.refreshTtlSeconds() != null && refresh.refreshTtlSeconds() > 0
+                ? refresh.refreshTtlSeconds()
+                : properties.getRefreshTokenTtlSeconds();
     }
 
     @Transactional
@@ -121,7 +149,7 @@ public class TokenService {
                         SELECT rt.token_hash, rt.family_id, rt.session_id, rt.expires_at,
                                rt.rotated_at, rt.revoked_at,
                                s.user_id, s.session_version, s.revoked_at AS session_revoked_at,
-                               s.target_audience AS audience
+                               s.target_audience AS audience, s.refresh_ttl_seconds
                         FROM refresh_tokens rt
                         JOIN auth_sessions s ON s.session_id = rt.session_id
                         WHERE rt.token_hash = ?
@@ -140,6 +168,8 @@ public class TokenService {
         if (audience == null) {
             throw new AuthException(401, "REFRESH_AUDIENCE_MISSING", "refresh session audience is missing");
         }
+        long ttl = rs.getLong("refresh_ttl_seconds");
+        Long refreshTtlSeconds = rs.wasNull() ? null : ttl;
         return new RefreshRecord(
                 rs.getString("token_hash"),
                 rs.getString("family_id"),
@@ -150,7 +180,8 @@ public class TokenService {
                 rs.getLong("user_id"),
                 rs.getLong("session_version"),
                 rs.getTimestamp("session_revoked_at") != null,
-                rs.getString("audience"));
+                rs.getString("audience"),
+                refreshTtlSeconds);
     }
 
     private void revokeFamily(String familyId) {
@@ -195,7 +226,8 @@ public class TokenService {
             long userId,
             long sessionVersion,
             boolean sessionRevoked,
-            String audience) {
+            String audience,
+            Long refreshTtlSeconds) {
         boolean expired() {
             return expiresAt.isBefore(java.time.Instant.now());
         }

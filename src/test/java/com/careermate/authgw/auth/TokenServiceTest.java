@@ -34,14 +34,17 @@ class TokenServiceTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void refreshDetectsReplayWhenTokenWasAlreadyRotated() throws Exception {
+    void refreshDetectsReplayWhenTokenWasRotatedBeyondGrace() throws Exception {
+        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 4, "ACTIVE");
         when(tokenHasher.sha256Hex("refresh-token")).thenReturn("hash");
         when(jdbcTemplate.query(anyString(), any(ResultSetExtractor.class), any())).thenAnswer(invocation -> {
             ResultSetExtractor<?> extractor = invocation.getArgument(1);
             when(resultSet.next()).thenReturn(true);
-            refreshRow(Timestamp.from(Instant.now().plusSeconds(60)), Timestamp.from(Instant.now()), null, null, "careermate-api");
+            // 旋转时间已超出 60s 宽限期 → 视作真正重放，灭族
+            refreshRow(Timestamp.from(Instant.now().plusSeconds(60)), Timestamp.from(Instant.now().minusSeconds(120)), null, null, "careermate-api");
             return extractor.extractData(resultSet);
         });
+        when(userRepository.findById(12)).thenReturn(Optional.of(user));
 
         assertThatThrownBy(() -> tokenService().refresh("refresh-token", client()))
                 .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("REFRESH_REPLAY_DETECTED"));
@@ -50,9 +53,29 @@ class TokenServiceTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void refreshReissuesTokensWhenReusedWithinRotationGrace() throws Exception {
+        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 4, "ACTIVE");
+        TokenPair pair = new TokenPair("access", "refresh2", "Bearer", 900, 604800);
+        when(tokenHasher.sha256Hex("refresh-token")).thenReturn("hash");
+        when(jdbcTemplate.query(anyString(), any(ResultSetExtractor.class), any())).thenAnswer(invocation -> {
+            ResultSetExtractor<?> extractor = invocation.getArgument(1);
+            when(resultSet.next()).thenReturn(true);
+            // 10 秒前刚旋转（多标签页并发双刷）→ 宽限期内补发，不灭族
+            refreshRow(Timestamp.from(Instant.now().plusSeconds(60)), Timestamp.from(Instant.now().minusSeconds(10)), null, null, "careermate-api");
+            return extractor.extractData(resultSet);
+        });
+        when(userRepository.findById(12)).thenReturn(Optional.of(user));
+        when(tokenIssuer.issueRotatedRefresh(user, client(), "careermate-api", "sid-1", "family-1", 604800L)).thenReturn(pair);
+
+        assertThat(tokenService().refresh("refresh-token", client())).isSameAs(pair);
+        verify(eventPublisher).publish("refresh.grace_reuse", java.util.Map.of("family_id", "family-1"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void refreshRotatesTokenWhenSessionAndUserAreActive() throws Exception {
         AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 4, "ACTIVE");
-        TokenPair pair = new TokenPair("access", "refresh2", "Bearer", 900);
+        TokenPair pair = new TokenPair("access", "refresh2", "Bearer", 900, 604800);
         when(tokenHasher.sha256Hex("refresh-token")).thenReturn("hash");
         when(jdbcTemplate.query(anyString(), any(ResultSetExtractor.class), any())).thenAnswer(invocation -> {
             ResultSetExtractor<?> extractor = invocation.getArgument(1);
@@ -63,7 +86,7 @@ class TokenServiceTest {
         when(userRepository.findById(12)).thenReturn(Optional.of(user));
         when(jdbcTemplate.update(org.mockito.ArgumentMatchers.contains("SET rotated_at = now()"),
                 org.mockito.ArgumentMatchers.<Object>any())).thenReturn(1);
-        when(tokenIssuer.issueRotatedRefresh(user, client(), "careermate-api", "sid-1", "family-1")).thenReturn(pair);
+        when(tokenIssuer.issueRotatedRefresh(user, client(), "careermate-api", "sid-1", "family-1", 604800L)).thenReturn(pair);
 
         assertThat(tokenService().refresh("refresh-token", client())).isSameAs(pair);
     }
@@ -188,10 +211,12 @@ class TokenServiceTest {
         when(resultSet.getLong("session_version")).thenReturn(4L);
         when(resultSet.getTimestamp("session_revoked_at")).thenReturn(sessionRevokedAt);
         when(resultSet.getString("audience")).thenReturn(audience);
+        when(resultSet.getLong("refresh_ttl_seconds")).thenReturn(0L);
+        when(resultSet.wasNull()).thenReturn(true);
     }
 
     private TokenService tokenService() {
-        return new TokenService(jdbcTemplate, tokenHasher, tokenIssuer, userRepository, passwordHasher, eventPublisher);
+        return new TokenService(jdbcTemplate, tokenHasher, tokenIssuer, userRepository, passwordHasher, eventPublisher, new AuthProperties());
     }
 
     private static OAuthClient client() {

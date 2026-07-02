@@ -45,18 +45,18 @@ class AuthCoreServicesTest {
     void loginPasswordIssuesTokensForActiveUserWithRagforgeMembership() {
         AuthUser user = user(7, "hash", "alice", "pwd-hash", "ADMIN", 2, "ACTIVE");
         OAuthClient client = client();
-        TokenPair pair = new TokenPair("access", "refresh", "Bearer", 900);
+        TokenPair pair = new TokenPair("access", "refresh", "Bearer", 900, 604800);
         when(codeStore.getValue("authgw:login:password:lock:alice")).thenReturn(Optional.empty());
         when(userRepository.findByAccount("alice")).thenReturn(Optional.of(user));
         when(passwordHasher.matches("secret", "pwd-hash")).thenReturn(true);
         when(membershipRepository.find(7, "ragforge")).thenReturn(Optional.of(new AppMembership(7, "ragforge", "USER", "ACTIVE")));
-        when(tokenIssuer.issueUserTokens(user, client, "ragforge-admin-api")).thenReturn(pair);
+        when(tokenIssuer.issueUserTokens(user, client, "ragforge-admin-api", false)).thenReturn(pair);
 
         TokenPair result = loginService().loginPassword("alice", "secret", "ragforge-admin-api", client);
 
         assertThat(result).isSameAs(pair);
         verify(codeStore).delete("authgw:login:password:fail:alice");
-        verify(auditLogService).info("login.password.success", 7L, "ragforge-admin-backend", Map.of("target_aud", "ragforge-admin-api"));
+        verify(auditLogService).info("login.password.success", 7L, "ragforge-admin-backend", Map.of("target_aud", "ragforge-admin-api", "remember", false));
     }
 
     @Test
@@ -102,12 +102,12 @@ class AuthCoreServicesTest {
         String phoneHash = PhoneSupport.hashPhone(phone, smsProperties.getPhoneHashPepper());
         AuthUser user = user(9, phoneHash, null, null, "USER", 0, "ACTIVE");
         OAuthClient client = client();
-        TokenPair pair = new TokenPair("access", "refresh", "Bearer", 900);
+        TokenPair pair = new TokenPair("access", "refresh", "Bearer", 900, 604800);
         when(smsRateLimiter.getPendingProviderOutId(SmsScene.LOGIN, phoneHash)).thenReturn(Optional.of("out-1"));
         when(smsProvider.checkVerifyCode(any())).thenReturn(new MobileSmsAuthProvider.VerifyResult(true, phone, "req-1", "OK", "ok", "PASS"));
         when(userRepository.findByPhoneHash(phoneHash)).thenReturn(Optional.empty());
         when(userRepository.createMobileUser(phoneHash)).thenReturn(user);
-        when(tokenIssuer.issueUserTokens(user, client, "careermate-api")).thenReturn(pair);
+        when(tokenIssuer.issueUserTokens(user, client, "careermate-api", false)).thenReturn(pair);
 
         assertThat(loginService().loginMobile("13800000000", "123456", "careermate-api", client)).isSameAs(pair);
         verify(smsRateLimiter).clearPendingCode(SmsScene.LOGIN, phoneHash);

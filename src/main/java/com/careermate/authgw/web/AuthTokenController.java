@@ -43,7 +43,8 @@ public class AuthTokenController {
             @RequestParam(name = "client_assertion", required = false) String clientAssertion) {
         OAuthClient client = clientAuthenticator.authenticate(clientId, clientAssertionType, clientAssertion);
         TokenPair tokens = tokenService.refresh(refreshToken, client);
-        return new TokenResponse(tokens.accessToken(), tokens.refreshToken(), tokens.tokenType(), tokens.expiresIn());
+        return new TokenResponse(
+                tokens.accessToken(), tokens.refreshToken(), tokens.tokenType(), tokens.expiresIn(), tokens.refreshExpiresIn());
     }
 
     @PostMapping("/auth/logout")
@@ -68,12 +69,13 @@ public class AuthTokenController {
                 .body(Map.of("error", ex.code(), "message", ex.getMessage()));
     }
 
-    @JsonPropertyOrder({"access_token", "refresh_token", "token_type", "expires_in"})
+    @JsonPropertyOrder({"access_token", "refresh_token", "token_type", "expires_in", "refresh_expires_in"})
     public record TokenResponse(
             @JsonProperty("access_token") String accessToken,
             @JsonProperty("refresh_token") String refreshToken,
             @JsonProperty("token_type") String tokenType,
-            @JsonProperty("expires_in") long expiresIn) {
+            @JsonProperty("expires_in") long expiresIn,
+            @JsonProperty("refresh_expires_in") long refreshExpiresIn) {
     }
 
     public record LogoutAllRequest(String password) {
