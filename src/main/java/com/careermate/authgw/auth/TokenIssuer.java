@@ -26,6 +26,10 @@ public class TokenIssuer {
     }
 
     public TokenPair issueUserTokens(AuthUser user, OAuthClient client, String targetAud) {
+        return issueUserTokens(user, client, targetAud, false);
+    }
+
+    public TokenPair issueUserTokens(AuthUser user, OAuthClient client, String targetAud, boolean remember) {
         if (!client.allowedAudiences().contains(targetAud)) {
             throw new AuthException(403, "AUDIENCE_NOT_ALLOWED", "client is not allowed to request target_aud");
         }
@@ -33,16 +37,20 @@ public class TokenIssuer {
         String sessionId = "sid_" + UUID.randomUUID();
         String familyId = "rtf_" + UUID.randomUUID();
         Instant now = Instant.now();
+        // 记住我 → 30 天 refresh TTL；写入会话，旋转时继承（滑动窗口）。
+        long refreshTtlSeconds = remember
+                ? properties.getRememberRefreshTtlSeconds()
+                : properties.getRefreshTokenTtlSeconds();
         Instant accessExpiresAt = now.plusSeconds(properties.getAccessTokenTtlSeconds());
-        Instant refreshExpiresAt = now.plusSeconds(properties.getRefreshTokenTtlSeconds());
+        Instant refreshExpiresAt = now.plusSeconds(refreshTtlSeconds);
         String jti = "jti_" + UUID.randomUUID();
         String refreshToken = "rt_" + UUID.randomUUID() + "." + UUID.randomUUID();
 
         jdbcTemplate.update("""
-                        INSERT INTO auth_sessions(session_id, user_id, device_id, target_audience, session_version, created_at)
-                        VALUES (?, ?, ?, ?, ?, now())
+                        INSERT INTO auth_sessions(session_id, user_id, device_id, target_audience, session_version, refresh_ttl_seconds, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, now())
                         """,
-                sessionId, user.id(), null, targetAud, user.sessionVersion());
+                sessionId, user.id(), null, targetAud, user.sessionVersion(), refreshTtlSeconds);
         storeRefreshToken(refreshToken, familyId, sessionId, refreshExpiresAt);
 
         JWTClaimsSet claims = new JWTClaimsSet.Builder()
@@ -63,17 +71,21 @@ public class TokenIssuer {
                 .claim("session_version", user.sessionVersion())
                 .build();
 
-        return new TokenPair(jwtSigner.sign(claims), refreshToken, "Bearer", properties.getAccessTokenTtlSeconds());
+        return new TokenPair(
+                jwtSigner.sign(claims), refreshToken, "Bearer",
+                properties.getAccessTokenTtlSeconds(), refreshTtlSeconds);
     }
 
-    public TokenPair issueRotatedRefresh(AuthUser user, OAuthClient client, String targetAud, String sessionId, String familyId) {
+    public TokenPair issueRotatedRefresh(
+            AuthUser user, OAuthClient client, String targetAud, String sessionId, String familyId, long refreshTtlSeconds) {
         if (!client.allowedAudiences().contains(targetAud)) {
             throw new AuthException(403, "AUDIENCE_NOT_ALLOWED", "client is not allowed to request target_aud");
         }
 
         Instant now = Instant.now();
         Instant accessExpiresAt = now.plusSeconds(properties.getAccessTokenTtlSeconds());
-        Instant refreshExpiresAt = now.plusSeconds(properties.getRefreshTokenTtlSeconds());
+        // 滑动窗口：旋转时按会话的 TTL 重新起算（记住我=30天，默认=7天）。
+        Instant refreshExpiresAt = now.plusSeconds(refreshTtlSeconds);
         String jti = "jti_" + UUID.randomUUID();
         String refreshToken = "rt_" + UUID.randomUUID() + "." + UUID.randomUUID();
         storeRefreshToken(refreshToken, familyId, sessionId, refreshExpiresAt);
@@ -96,7 +108,9 @@ public class TokenIssuer {
                 .claim("session_version", user.sessionVersion())
                 .build();
 
-        return new TokenPair(jwtSigner.sign(claims), refreshToken, "Bearer", properties.getAccessTokenTtlSeconds());
+        return new TokenPair(
+                jwtSigner.sign(claims), refreshToken, "Bearer",
+                properties.getAccessTokenTtlSeconds(), refreshTtlSeconds);
     }
 
     public String issueExchangedToken(JWTClaimsSet subjectClaims, OAuthClient client, String requestedAudience, Set<String> requestedScopes) {

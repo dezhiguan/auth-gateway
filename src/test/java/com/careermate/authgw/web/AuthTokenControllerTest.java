@@ -35,7 +35,7 @@ class AuthTokenControllerTest {
     void refreshReturnsOAuthTokenResponse() throws Exception {
         OAuthClient client = client();
         when(clientAuthenticator.authenticate("client", ClientAuthenticator.ASSERTION_TYPE, "assertion")).thenReturn(client);
-        when(tokenService.refresh("refresh-token", client)).thenReturn(new TokenPair("access", "refresh2", "Bearer", 900));
+        when(tokenService.refresh("refresh-token", client)).thenReturn(new TokenPair("access", "refresh2", "Bearer", 900, 604800));
 
         mockMvc.perform(post("/auth/token/refresh")
                         .contentType(MediaType.APPLICATION_FORM_URLENCODED)

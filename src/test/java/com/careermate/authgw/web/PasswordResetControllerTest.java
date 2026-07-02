@@ -55,7 +55,7 @@ class PasswordResetControllerTest {
         OAuthClient client = client();
         when(clientAuthenticator.authenticate("client", ClientAuthenticator.ASSERTION_TYPE, "assertion")).thenReturn(client);
         when(passwordResetService.confirm("ticket-1", "Newpass1", client, "careermate-api"))
-                .thenReturn(new TokenPair("access", "refresh", "Bearer", 900));
+                .thenReturn(new TokenPair("access", "refresh", "Bearer", 900, 604800));
 
         mockMvc.perform(post("/auth/password/reset/confirm")
                         .contentType(MediaType.APPLICATION_JSON)

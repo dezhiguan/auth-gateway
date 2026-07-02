@@ -192,7 +192,7 @@ class PasswordResetServiceTest {
         String ticket = signedResetTicket(key, 7, 2, Instant.now().plusSeconds(300));
         AuthUser user = user("phone-hash");
         OAuthClient client = client();
-        TokenPair pair = new TokenPair("access", "refresh", "Bearer", 900);
+        TokenPair pair = new TokenPair("access", "refresh", "Bearer", 900, 604800);
         when(jwksProvider.publicJwkSet()).thenReturn(new JWKSet(key.toPublicJWK()));
         when(userRepository.findById(7)).thenReturn(Optional.of(user));
         when(codeStore.getValue("authgw:password-reset:confirm:lock:7")).thenReturn(Optional.empty());
