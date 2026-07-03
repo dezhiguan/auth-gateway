@@ -1,6 +1,7 @@
 package com.careermate.authgw.web;
 
 import com.careermate.authgw.auth.AuthException;
+import com.careermate.authgw.auth.CaptchaService;
 import com.careermate.authgw.auth.LoginService;
 import com.careermate.authgw.auth.OAuthClient;
 import com.careermate.authgw.auth.TokenPair;
@@ -13,6 +14,7 @@ import java.util.Map;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -26,6 +28,16 @@ public class AuthLoginController {
     public AuthLoginController(ClientAuthenticator clientAuthenticator, LoginService loginService) {
         this.clientAuthenticator = clientAuthenticator;
         this.loginService = loginService;
+    }
+
+    /** 换一张：前端"看不清/刷新"时获取一张新的图形验证码。 */
+    @GetMapping("/auth/captcha")
+    public ResponseEntity<Map<String, Object>> captcha() {
+        CaptchaService.Captcha captcha = loginService.newCaptcha();
+        Map<String, Object> body = new HashMap<>();
+        body.put("captchaImage", captcha.image());
+        body.put("challengeId", captcha.challengeId());
+        return ResponseEntity.ok(body);
     }
 
     @PostMapping(value = "/auth/login/password", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)

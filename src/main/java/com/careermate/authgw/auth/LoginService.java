@@ -14,8 +14,12 @@ import org.springframework.stereotype.Service;
 @Service
 public class LoginService {
 
-    private static final Duration FAIL_WINDOW = Duration.ofMinutes(5);
-    private static final Duration LOCK_WINDOW = Duration.ofMinutes(30);
+    private static final Duration FAIL_WINDOW = Duration.ofMinutes(30);
+    private static final Duration LOCK_WINDOW = Duration.ofMinutes(15);
+    // 失败达该次数后，之后每次登录都必须完成图形验证码（粘性），直到登录成功才解除。
+    private static final int CAPTCHA_THRESHOLD = 5;
+    // 失败达该次数后，即使有验证码也临时硬锁定一段时间（防撞库/持续人工爆破的兜底）。
+    private static final int HARD_LOCK_THRESHOLD = 15;
 
     private final AuthUserRepository userRepository;
     private final MembershipRepository membershipRepository;
@@ -71,17 +75,19 @@ public class LoginService {
             OAuthClient client,
             boolean remember) {
         String key = "authgw:login:password:fail:" + account;
-        // 失败次数过多时进入"需图形验证码"状态：输对验证码即解锁放行，不再粗暴地干等时间锁过期。
+        // 兜底硬锁：失败达上限后即使有验证码也临时锁定，期间直接拒绝（防撞库/持续爆破）。
         if (bucketStore.getValue(lockKey(account)).isPresent()) {
+            throw new AuthException(423, "LOGIN_TEMP_LOCKED", "登录失败次数过多，请稍后再试");
+        }
+        // 粘性验证码：一旦失败达阈值，之后每次登录都必须先完成图形验证码，直到登录成功才解除。
+        if (bucketStore.getCounter(key) >= CAPTCHA_THRESHOLD) {
             if (captcha == null || captcha.isBlank()) {
                 throw captchaRequired("登录失败次数较多，请输入图形验证码");
             }
             if (!captchaService.verify(challengeId, captcha)) {
                 throw captchaRequired("图形验证码不正确，请重新输入");
             }
-            // 验证码通过：解除锁定与失败计数，继续正常凭据校验。
-            bucketStore.delete(lockKey(account));
-            bucketStore.delete(key);
+            // 验证码通过后不清失败计数（保持粘性），仅在登录成功时才清除。
         }
 
         AuthUser user = findPasswordLoginUser(account)
@@ -89,7 +95,9 @@ public class LoginService {
         if (!"ACTIVE".equalsIgnoreCase(user.status()) || !passwordHasher.matches(password, user.passwordHash())) {
             throw fail(key, account);
         }
+        // 登录成功：清除失败计数与硬锁。
         bucketStore.delete(key);
+        bucketStore.delete(lockKey(account));
 
         enforceRagForgeAccess(targetAud, user);
         auditLogService.info("login.password.success", user.id(), client.clientId(),
@@ -173,6 +181,11 @@ public class LoginService {
         return userRepository.findByAccount(account);
     }
 
+    /** 生成一张新的图形验证码（供前端"换一张/看不清"刷新）。 */
+    public CaptchaService.Captcha newCaptcha() {
+        return captchaService.generate();
+    }
+
     /** 构造带新验证码图片的 CAPTCHA_REQUIRED 异常，供前端展示并回填。 */
     private AuthException captchaRequired(String message) {
         CaptchaService.Captcha captcha = captchaService.generate();
@@ -181,12 +194,17 @@ public class LoginService {
 
     private AuthException fail(String key, String account) {
         long count = bucketStore.increment(key, FAIL_WINDOW);
-        if (count >= 5) {
+        // 兜底硬锁：失败达上限即使有验证码也临时锁定。
+        if (count >= HARD_LOCK_THRESHOLD) {
             bucketStore.setValue(lockKey(account), "1", LOCK_WINDOW);
             auditLogService.high("login.password.locked", null, null, java.util.Map.of("account", account));
-            return captchaRequired("登录失败次数较多，请输入图形验证码");
+            return new AuthException(423, "LOGIN_TEMP_LOCKED", "登录失败次数过多，请稍后再试");
         }
         auditLogService.info("login.password.failed", null, null, java.util.Map.of("account", account, "failure_count", count));
+        // 粘性：已过验证码阈值时，密码错也要求重新完成验证码并返回新图。
+        if (count >= CAPTCHA_THRESHOLD) {
+            return captchaRequired("账号或密码不正确，请重新输入图形验证码");
+        }
         return new AuthException(401, "BAD_CREDENTIALS", "账号或密码不正确");
     }
 

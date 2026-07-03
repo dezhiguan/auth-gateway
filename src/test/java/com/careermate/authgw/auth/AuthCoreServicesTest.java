@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -61,10 +62,12 @@ class AuthCoreServicesTest {
     }
 
     @Test
-    void loginPasswordLocksAfterRepeatedFailures() {
+    void loginPasswordRequiresCaptchaWhenFailureReachesThreshold() {
         when(codeStore.getValue("authgw:login:password:lock:missing")).thenReturn(Optional.empty());
+        when(codeStore.getCounter("authgw:login:password:fail:missing")).thenReturn(4L);
         when(userRepository.findByAccount("missing")).thenReturn(Optional.empty());
-        when(codeStore.increment("authgw:login:password:fail:missing", java.time.Duration.ofMinutes(5))).thenReturn(5L);
+        when(codeStore.increment("authgw:login:password:fail:missing", java.time.Duration.ofMinutes(30)))
+                .thenReturn(5L);
         when(captchaService.generate()).thenReturn(new CaptchaService.Captcha("cid-lock", "data:image/png;base64,LOCK"));
 
         assertThatThrownBy(() -> loginService().loginPassword("missing", "bad", "careermate-api", client()))
@@ -72,30 +75,39 @@ class AuthCoreServicesTest {
                     assertThat(ex.status()).isEqualTo(423);
                     assertThat(ex.code()).isEqualTo("CAPTCHA_REQUIRED");
                     assertThat(ex.captchaImage()).isEqualTo("data:image/png;base64,LOCK");
-                    assertThat(ex.challengeId()).isEqualTo("cid-lock");
                 });
-        verify(codeStore).setValue("authgw:login:password:lock:missing", "1", java.time.Duration.ofMinutes(30));
+        // 未到硬锁阈值，不设硬锁
+        verify(codeStore, never()).setValue(eq("authgw:login:password:lock:missing"), any(), any());
     }
 
     @Test
-    void loginPasswordLockedWithoutCaptchaReturnsCaptchaWithImage() {
+    void loginPasswordWhenHardLockedReturnsTempLocked() {
         when(codeStore.getValue("authgw:login:password:lock:alice")).thenReturn(Optional.of("1"));
+
+        assertThatThrownBy(() -> loginService()
+                .loginPassword("alice", "secret", null, null, "careermate-api", client(), false))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("LOGIN_TEMP_LOCKED"));
+    }
+
+    @Test
+    void loginPasswordAtThresholdWithoutCaptchaReturnsCaptcha() {
+        when(codeStore.getValue("authgw:login:password:lock:alice")).thenReturn(Optional.empty());
+        when(codeStore.getCounter("authgw:login:password:fail:alice")).thenReturn(5L);
         when(captchaService.generate()).thenReturn(new CaptchaService.Captcha("cid-1", "data:image/png;base64,AAA"));
 
         assertThatThrownBy(() -> loginService()
                 .loginPassword("alice", "secret", null, null, "careermate-api", client(), false))
                 .isInstanceOfSatisfying(AuthException.class, ex -> {
                     assertThat(ex.code()).isEqualTo("CAPTCHA_REQUIRED");
-                    assertThat(ex.status()).isEqualTo(423);
-                    assertThat(ex.captchaImage()).isEqualTo("data:image/png;base64,AAA");
                     assertThat(ex.challengeId()).isEqualTo("cid-1");
                     assertThat(ex.getMessage()).contains("请输入图形验证码");
                 });
     }
 
     @Test
-    void loginPasswordLockedWithWrongCaptchaReturnsFreshCaptchaAndHint() {
-        when(codeStore.getValue("authgw:login:password:lock:alice")).thenReturn(Optional.of("1"));
+    void loginPasswordAtThresholdWithWrongCaptchaReturnsHint() {
+        when(codeStore.getValue("authgw:login:password:lock:alice")).thenReturn(Optional.empty());
+        when(codeStore.getCounter("authgw:login:password:fail:alice")).thenReturn(6L);
         when(captchaService.verify("cid", "BADX")).thenReturn(false);
         when(captchaService.generate()).thenReturn(new CaptchaService.Captcha("cid-2", "data:image/png;base64,BBB"));
 
@@ -109,11 +121,34 @@ class AuthCoreServicesTest {
     }
 
     @Test
-    void loginPasswordLockedWithCorrectCaptchaUnlocksAndLogsIn() {
+    void loginPasswordCorrectCaptchaButWrongPasswordStaysSticky() {
+        when(codeStore.getValue("authgw:login:password:lock:alice")).thenReturn(Optional.empty());
+        when(codeStore.getCounter("authgw:login:password:fail:alice")).thenReturn(6L);
+        when(captchaService.verify("cid", "GOOD")).thenReturn(true);
+        when(userRepository.findByAccount("alice")).thenReturn(Optional.empty());
+        when(codeStore.increment("authgw:login:password:fail:alice", java.time.Duration.ofMinutes(30)))
+                .thenReturn(7L);
+        when(captchaService.generate()).thenReturn(new CaptchaService.Captcha("cid-3", "data:image/png;base64,CCC"));
+
+        // 验证码对但密码错：仍返回验证码要求（粘性），不是 BAD_CREDENTIALS
+        assertThatThrownBy(() -> loginService()
+                .loginPassword("alice", "wrong", "GOOD", "cid", "careermate-api", client(), false))
+                .isInstanceOfSatisfying(AuthException.class, ex -> {
+                    assertThat(ex.code()).isEqualTo("CAPTCHA_REQUIRED");
+                    assertThat(ex.getMessage()).contains("账号或密码不正确");
+                    assertThat(ex.challengeId()).isEqualTo("cid-3");
+                });
+        // 未清失败计数（保持粘性）
+        verify(codeStore, never()).delete("authgw:login:password:fail:alice");
+    }
+
+    @Test
+    void loginPasswordCorrectCaptchaAndPasswordSucceedsAndResets() {
         AuthUser user = user(7, "hash", "alice", "pwd-hash", "USER", 2, "ACTIVE");
         OAuthClient client = client();
         TokenPair pair = new TokenPair("access", "refresh", "Bearer", 900, 604800);
-        when(codeStore.getValue("authgw:login:password:lock:alice")).thenReturn(Optional.of("1"));
+        when(codeStore.getValue("authgw:login:password:lock:alice")).thenReturn(Optional.empty());
+        when(codeStore.getCounter("authgw:login:password:fail:alice")).thenReturn(6L);
         when(captchaService.verify("cid", "GOOD")).thenReturn(true);
         when(userRepository.findByAccount("alice")).thenReturn(Optional.of(user));
         when(passwordHasher.matches("secret", "pwd-hash")).thenReturn(true);
@@ -125,7 +160,31 @@ class AuthCoreServicesTest {
                 loginService().loginPassword("alice", "secret", "GOOD", "cid", "ragforge-admin-api", client, false);
 
         assertThat(result).isSameAs(pair);
+        verify(codeStore).delete("authgw:login:password:fail:alice");
         verify(codeStore).delete("authgw:login:password:lock:alice");
+    }
+
+    @Test
+    void loginPasswordHardLocksAfterManyFailures() {
+        when(codeStore.getValue("authgw:login:password:lock:alice")).thenReturn(Optional.empty());
+        when(codeStore.getCounter("authgw:login:password:fail:alice")).thenReturn(14L);
+        when(captchaService.verify("cid", "GOOD")).thenReturn(true);
+        when(userRepository.findByAccount("alice")).thenReturn(Optional.empty());
+        when(codeStore.increment("authgw:login:password:fail:alice", java.time.Duration.ofMinutes(30)))
+                .thenReturn(15L);
+
+        assertThatThrownBy(() -> loginService()
+                .loginPassword("alice", "wrong", "GOOD", "cid", "careermate-api", client(), false))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("LOGIN_TEMP_LOCKED"));
+        verify(codeStore).setValue("authgw:login:password:lock:alice", "1", java.time.Duration.ofMinutes(15));
+    }
+
+    @Test
+    void newCaptchaGeneratesFreshChallenge() {
+        when(captchaService.generate()).thenReturn(new CaptchaService.Captcha("cid-new", "data:image/png;base64,NEW"));
+        CaptchaService.Captcha c = loginService().newCaptcha();
+        assertThat(c.challengeId()).isEqualTo("cid-new");
+        assertThat(c.image()).isEqualTo("data:image/png;base64,NEW");
     }
 
     @Test
