@@ -8,6 +8,7 @@ import com.careermate.authgw.oauth.ClientAuthenticator;
 import com.careermate.authgw.sms.SmsException;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import java.util.HashMap;
 import java.util.Map;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -31,13 +32,16 @@ public class AuthLoginController {
     public LoginResponse loginPassword(
             @RequestParam String account,
             @RequestParam String password,
+            @RequestParam(name = "captcha", required = false) String captcha,
+            @RequestParam(name = "challenge_id", required = false) String challengeId,
             @RequestParam("target_aud") String targetAud,
             @RequestParam(name = "remember", required = false, defaultValue = "false") boolean remember,
             @RequestParam(name = "client_id", required = false) String clientId,
             @RequestParam(name = "client_assertion_type", required = false) String clientAssertionType,
             @RequestParam(name = "client_assertion", required = false) String clientAssertion) {
         OAuthClient client = clientAuthenticator.authenticate(clientId, clientAssertionType, clientAssertion);
-        TokenPair tokens = loginService.loginPassword(account, password, targetAud, client, remember);
+        TokenPair tokens =
+                loginService.loginPassword(account, password, captcha, challengeId, targetAud, client, remember);
         return new LoginResponse(
                 tokens.accessToken(), tokens.refreshToken(), tokens.tokenType(), tokens.expiresIn(), tokens.refreshExpiresIn());
     }
@@ -60,8 +64,17 @@ public class AuthLoginController {
     @ExceptionHandler(AuthException.class)
     public ResponseEntity<Map<String, Object>> handleAuthException(AuthException ex) {
         if (ex.status() == 423) {
-            return ResponseEntity.status(ex.status())
-                    .body(Map.of("error", ex.code(), "message", ex.getMessage(), "captcha_required", true));
+            Map<String, Object> body = new HashMap<>();
+            body.put("error", ex.code());
+            body.put("message", ex.getMessage());
+            body.put("captcha_required", true);
+            if (ex.captchaImage() != null) {
+                body.put("captchaImage", ex.captchaImage());
+            }
+            if (ex.challengeId() != null) {
+                body.put("challengeId", ex.challengeId());
+            }
+            return ResponseEntity.status(ex.status()).body(body);
         }
         return ResponseEntity.status(ex.status())
                 .body(Map.of("error", ex.code(), "message", ex.getMessage()));

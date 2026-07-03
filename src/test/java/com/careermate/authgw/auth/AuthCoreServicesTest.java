@@ -38,6 +38,7 @@ class AuthCoreServicesTest {
     @Mock JdbcTemplate jdbcTemplate;
     @Mock AuditLogService auditLogService;
     @Mock EventPublisher eventPublisher;
+    @Mock CaptchaService captchaService;
 
     private final SmsProperties smsProperties = new SmsProperties();
 
@@ -64,13 +65,67 @@ class AuthCoreServicesTest {
         when(codeStore.getValue("authgw:login:password:lock:missing")).thenReturn(Optional.empty());
         when(userRepository.findByAccount("missing")).thenReturn(Optional.empty());
         when(codeStore.increment("authgw:login:password:fail:missing", java.time.Duration.ofMinutes(5))).thenReturn(5L);
+        when(captchaService.generate()).thenReturn(new CaptchaService.Captcha("cid-lock", "data:image/png;base64,LOCK"));
 
         assertThatThrownBy(() -> loginService().loginPassword("missing", "bad", "careermate-api", client()))
                 .isInstanceOfSatisfying(AuthException.class, ex -> {
                     assertThat(ex.status()).isEqualTo(423);
                     assertThat(ex.code()).isEqualTo("CAPTCHA_REQUIRED");
+                    assertThat(ex.captchaImage()).isEqualTo("data:image/png;base64,LOCK");
+                    assertThat(ex.challengeId()).isEqualTo("cid-lock");
                 });
         verify(codeStore).setValue("authgw:login:password:lock:missing", "1", java.time.Duration.ofMinutes(30));
+    }
+
+    @Test
+    void loginPasswordLockedWithoutCaptchaReturnsCaptchaWithImage() {
+        when(codeStore.getValue("authgw:login:password:lock:alice")).thenReturn(Optional.of("1"));
+        when(captchaService.generate()).thenReturn(new CaptchaService.Captcha("cid-1", "data:image/png;base64,AAA"));
+
+        assertThatThrownBy(() -> loginService()
+                .loginPassword("alice", "secret", null, null, "careermate-api", client(), false))
+                .isInstanceOfSatisfying(AuthException.class, ex -> {
+                    assertThat(ex.code()).isEqualTo("CAPTCHA_REQUIRED");
+                    assertThat(ex.status()).isEqualTo(423);
+                    assertThat(ex.captchaImage()).isEqualTo("data:image/png;base64,AAA");
+                    assertThat(ex.challengeId()).isEqualTo("cid-1");
+                    assertThat(ex.getMessage()).contains("请输入图形验证码");
+                });
+    }
+
+    @Test
+    void loginPasswordLockedWithWrongCaptchaReturnsFreshCaptchaAndHint() {
+        when(codeStore.getValue("authgw:login:password:lock:alice")).thenReturn(Optional.of("1"));
+        when(captchaService.verify("cid", "BADX")).thenReturn(false);
+        when(captchaService.generate()).thenReturn(new CaptchaService.Captcha("cid-2", "data:image/png;base64,BBB"));
+
+        assertThatThrownBy(() -> loginService()
+                .loginPassword("alice", "secret", "BADX", "cid", "careermate-api", client(), false))
+                .isInstanceOfSatisfying(AuthException.class, ex -> {
+                    assertThat(ex.code()).isEqualTo("CAPTCHA_REQUIRED");
+                    assertThat(ex.getMessage()).contains("图形验证码不正确");
+                    assertThat(ex.challengeId()).isEqualTo("cid-2");
+                });
+    }
+
+    @Test
+    void loginPasswordLockedWithCorrectCaptchaUnlocksAndLogsIn() {
+        AuthUser user = user(7, "hash", "alice", "pwd-hash", "USER", 2, "ACTIVE");
+        OAuthClient client = client();
+        TokenPair pair = new TokenPair("access", "refresh", "Bearer", 900, 604800);
+        when(codeStore.getValue("authgw:login:password:lock:alice")).thenReturn(Optional.of("1"));
+        when(captchaService.verify("cid", "GOOD")).thenReturn(true);
+        when(userRepository.findByAccount("alice")).thenReturn(Optional.of(user));
+        when(passwordHasher.matches("secret", "pwd-hash")).thenReturn(true);
+        when(membershipRepository.find(7, "ragforge"))
+                .thenReturn(Optional.of(new AppMembership(7, "ragforge", "USER", "ACTIVE")));
+        when(tokenIssuer.issueUserTokens(user, client, "ragforge-admin-api", false)).thenReturn(pair);
+
+        TokenPair result =
+                loginService().loginPassword("alice", "secret", "GOOD", "cid", "ragforge-admin-api", client, false);
+
+        assertThat(result).isSameAs(pair);
+        verify(codeStore).delete("authgw:login:password:lock:alice");
     }
 
     @Test
@@ -220,7 +275,7 @@ class AuthCoreServicesTest {
 
     private LoginService loginService() {
         return new LoginService(userRepository, membershipRepository, passwordHasher, tokenIssuer, codeStore,
-                smsRateLimiter, smsProvider, smsProperties, jdbcTemplate, auditLogService);
+                smsRateLimiter, smsProvider, smsProperties, jdbcTemplate, auditLogService, captchaService);
     }
 
     private RegistrationService registrationService() {

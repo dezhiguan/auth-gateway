@@ -27,6 +27,7 @@ public class LoginService {
     private final SmsProperties smsProperties;
     private final JdbcTemplate jdbcTemplate;
     private final AuditLogService auditLogService;
+    private final CaptchaService captchaService;
 
     public LoginService(
             AuthUserRepository userRepository,
@@ -38,7 +39,8 @@ public class LoginService {
             MobileSmsAuthProvider smsProvider,
             SmsProperties smsProperties,
             JdbcTemplate jdbcTemplate,
-            AuditLogService auditLogService) {
+            AuditLogService auditLogService,
+            CaptchaService captchaService) {
         this.userRepository = userRepository;
         this.membershipRepository = membershipRepository;
         this.passwordHasher = passwordHasher;
@@ -49,16 +51,37 @@ public class LoginService {
         this.smsProperties = smsProperties;
         this.jdbcTemplate = jdbcTemplate;
         this.auditLogService = auditLogService;
+        this.captchaService = captchaService;
     }
 
     public TokenPair loginPassword(String account, String password, String targetAud, OAuthClient client) {
-        return loginPassword(account, password, targetAud, client, false);
+        return loginPassword(account, password, null, null, targetAud, client, false);
     }
 
     public TokenPair loginPassword(String account, String password, String targetAud, OAuthClient client, boolean remember) {
+        return loginPassword(account, password, null, null, targetAud, client, remember);
+    }
+
+    public TokenPair loginPassword(
+            String account,
+            String password,
+            String captcha,
+            String challengeId,
+            String targetAud,
+            OAuthClient client,
+            boolean remember) {
         String key = "authgw:login:password:fail:" + account;
+        // 失败次数过多时进入"需图形验证码"状态：输对验证码即解锁放行，不再粗暴地干等时间锁过期。
         if (bucketStore.getValue(lockKey(account)).isPresent()) {
-            throw new AuthException(423, "CAPTCHA_REQUIRED", "登录失败次数较多，请完成图形验证码后重试");
+            if (captcha == null || captcha.isBlank()) {
+                throw captchaRequired("登录失败次数较多，请输入图形验证码");
+            }
+            if (!captchaService.verify(challengeId, captcha)) {
+                throw captchaRequired("图形验证码不正确，请重新输入");
+            }
+            // 验证码通过：解除锁定与失败计数，继续正常凭据校验。
+            bucketStore.delete(lockKey(account));
+            bucketStore.delete(key);
         }
 
         AuthUser user = findPasswordLoginUser(account)
@@ -150,12 +173,18 @@ public class LoginService {
         return userRepository.findByAccount(account);
     }
 
+    /** 构造带新验证码图片的 CAPTCHA_REQUIRED 异常，供前端展示并回填。 */
+    private AuthException captchaRequired(String message) {
+        CaptchaService.Captcha captcha = captchaService.generate();
+        return new AuthException(423, "CAPTCHA_REQUIRED", message, captcha.image(), captcha.challengeId());
+    }
+
     private AuthException fail(String key, String account) {
         long count = bucketStore.increment(key, FAIL_WINDOW);
         if (count >= 5) {
             bucketStore.setValue(lockKey(account), "1", LOCK_WINDOW);
             auditLogService.high("login.password.locked", null, null, java.util.Map.of("account", account));
-            return new AuthException(423, "CAPTCHA_REQUIRED", "登录失败次数较多，请完成图形验证码后重试");
+            return captchaRequired("登录失败次数较多，请输入图形验证码");
         }
         auditLogService.info("login.password.failed", null, null, java.util.Map.of("account", account, "failure_count", count));
         return new AuthException(401, "BAD_CREDENTIALS", "账号或密码不正确");
