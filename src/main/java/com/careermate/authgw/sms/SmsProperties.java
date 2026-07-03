@@ -9,6 +9,13 @@ public class SmsProperties {
     private String phoneHashPepper = "auth-gateway-dev-pepper";
     private int codeTtlSeconds = 300;
     private String mockCode = "123456";
+
+    // 发送侧限流（防短信轰炸）：默认值已收紧，可经 auth.sms.* / 环境变量覆盖，无需重发版调优。
+    private int phoneDaySendLimit = 5; // 同一手机号每天最多发送条数
+    private int ipMinuteSendLimit = 10; // 同一 IP 每分钟最多发送条数
+    private int ipDaySendLimit = 100; // 同一 IP 每天最多发送条数（原缺失，补齐）
+    private int sendCooldownSeconds = 60; // 同一手机号两次发送的最小间隔
+
     private Aliyun aliyun = new Aliyun();
 
     public String getStorage() {
@@ -41,6 +48,38 @@ public class SmsProperties {
 
     public void setMockCode(String mockCode) {
         this.mockCode = mockCode;
+    }
+
+    public int getPhoneDaySendLimit() {
+        return phoneDaySendLimit;
+    }
+
+    public void setPhoneDaySendLimit(int phoneDaySendLimit) {
+        this.phoneDaySendLimit = phoneDaySendLimit;
+    }
+
+    public int getIpMinuteSendLimit() {
+        return ipMinuteSendLimit;
+    }
+
+    public void setIpMinuteSendLimit(int ipMinuteSendLimit) {
+        this.ipMinuteSendLimit = ipMinuteSendLimit;
+    }
+
+    public int getIpDaySendLimit() {
+        return ipDaySendLimit;
+    }
+
+    public void setIpDaySendLimit(int ipDaySendLimit) {
+        this.ipDaySendLimit = ipDaySendLimit;
+    }
+
+    public int getSendCooldownSeconds() {
+        return sendCooldownSeconds;
+    }
+
+    public void setSendCooldownSeconds(int sendCooldownSeconds) {
+        this.sendCooldownSeconds = sendCooldownSeconds;
     }
 
     public Aliyun getAliyun() {

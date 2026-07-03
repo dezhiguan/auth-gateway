@@ -48,12 +48,24 @@ class SmsAuthRateLimiterTest {
     }
 
     @Test
+    void checkSendAllowedRejectsIpDayLimit() {
+        when(store.getValue("authgw:sms:send:cooldown:register:phone")).thenReturn(Optional.empty());
+        when(store.getCounter("authgw:sms:send:day:register:phone")).thenReturn(0L);
+        when(store.getCounter("authgw:sms:send:ip:minute:register:ip")).thenReturn(0L);
+        when(store.getCounter("authgw:sms:send:ip:day:register:ip")).thenReturn(100L);
+
+        assertThatThrownBy(() -> limiter().checkSendAllowed(SmsScene.REGISTER, "phone", "ip", "138****0000"))
+                .isInstanceOfSatisfying(SmsException.class, ex -> assertThat(ex.code()).isEqualTo("SMS_IP_DAY_LIMITED"));
+    }
+
+    @Test
     void recordSendWritesCooldownAndCounters() {
         limiter().recordSend(SmsScene.REGISTER, "phone", "ip");
 
         verify(store).setValue("authgw:sms:send:cooldown:register:phone", "1", Duration.ofMinutes(1));
         verify(store).increment("authgw:sms:send:day:register:phone", Duration.ofDays(1));
         verify(store).increment("authgw:sms:send:ip:minute:register:ip", Duration.ofMinutes(1));
+        verify(store).increment("authgw:sms:send:ip:day:register:ip", Duration.ofDays(1));
     }
 
     @Test
@@ -98,6 +110,6 @@ class SmsAuthRateLimiterTest {
     }
 
     private SmsAuthRateLimiter limiter() {
-        return new SmsAuthRateLimiter(store);
+        return new SmsAuthRateLimiter(store, new SmsProperties());
     }
 }
