@@ -55,3 +55,8 @@ auth:
     phone-hash-pepper: ${AUTH_SMS_PHONE_HASH_PEPPER:auth-gateway-dev-pepper}
     code-ttl-seconds: 300
     mock-code: "123456"
+    # 发送侧限流（防短信轰炸）。可经环境变量在生产覆盖，无需重发版调优。
+    phone-day-send-limit: ${AUTH_SMS_PHONE_DAY_SEND_LIMIT:5}
+    ip-minute-send-limit: ${AUTH_SMS_IP_MINUTE_SEND_LIMIT:10}
+    ip-day-send-limit: ${AUTH_SMS_IP_DAY_SEND_LIMIT:100}
+    send-cooldown-seconds: ${AUTH_SMS_SEND_COOLDOWN_SECONDS:60}

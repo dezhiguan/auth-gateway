@@ -15,13 +15,12 @@ public class SmsAuthRateLimiter {
     private static final Duration ONE_DAY = Duration.ofDays(1);
     private static final Duration CODE_TTL = Duration.ofMinutes(5);
 
-    private static final int PHONE_DAY_SEND_LIMIT = 10;
-    private static final int IP_MINUTE_SEND_LIMIT = 30;
-
     private final SmsCodeStore store;
+    private final SmsProperties properties;
 
-    public SmsAuthRateLimiter(SmsCodeStore store) {
+    public SmsAuthRateLimiter(SmsCodeStore store, SmsProperties properties) {
         this.store = store;
+        this.properties = properties;
     }
 
     public void checkSendAllowed(SmsScene scene, String phoneHash, String ipHash, String maskedPhone) {
@@ -30,15 +29,20 @@ public class SmsAuthRateLimiter {
             throw new SmsException(429, "SMS_SEND_TOO_FREQUENT", "验证码已发送，请稍后再试");
         }
         assertUnderLimit(store.getCounter(key("authgw:sms:send:day", scene, phoneHash)),
-                PHONE_DAY_SEND_LIMIT, "SMS_PHONE_DAY_LIMITED", "send phone day", maskedPhone);
+                properties.getPhoneDaySendLimit(), "SMS_PHONE_DAY_LIMITED", "send phone day", maskedPhone);
         assertUnderLimit(store.getCounter(key("authgw:sms:send:ip:minute", scene, ipHash)),
-                IP_MINUTE_SEND_LIMIT, "SMS_IP_MINUTE_LIMITED", "send ip minute", ipHash);
+                properties.getIpMinuteSendLimit(), "SMS_IP_MINUTE_LIMITED", "send ip minute", ipHash);
+        // 每 IP 每天上限（原仅有每分钟窗口，无日上限 → 单 IP 可持续轰炸）。补齐日上限封住持续滥用。
+        assertUnderLimit(store.getCounter(key("authgw:sms:send:ip:day", scene, ipHash)),
+                properties.getIpDaySendLimit(), "SMS_IP_DAY_LIMITED", "send ip day", ipHash);
     }
 
     public void recordSend(SmsScene scene, String phoneHash, String ipHash) {
-        store.setValue(key("authgw:sms:send:cooldown", scene, phoneHash), "1", ONE_MINUTE);
+        store.setValue(key("authgw:sms:send:cooldown", scene, phoneHash), "1",
+                Duration.ofSeconds(properties.getSendCooldownSeconds()));
         store.increment(key("authgw:sms:send:day", scene, phoneHash), ONE_DAY);
         store.increment(key("authgw:sms:send:ip:minute", scene, ipHash), ONE_MINUTE);
+        store.increment(key("authgw:sms:send:ip:day", scene, ipHash), ONE_DAY);
     }
 
     public long sendCooldownRemainingSeconds(SmsScene scene, String phoneHash) {
