@@ -58,7 +58,7 @@ public class LoginService {
     public TokenPair loginPassword(String account, String password, String targetAud, OAuthClient client, boolean remember) {
         String key = "authgw:login:password:fail:" + account;
         if (bucketStore.getValue(lockKey(account)).isPresent()) {
-            throw new AuthException(423, "CAPTCHA_REQUIRED", "登录失败次数较多，请稍后再试");
+            throw new AuthException(423, "CAPTCHA_REQUIRED", "登录失败次数较多，请完成图形验证码后重试");
         }
 
         AuthUser user = findPasswordLoginUser(account)
@@ -80,13 +80,20 @@ public class LoginService {
 
     public TokenPair loginMobile(String phone, String code, String targetAud, OAuthClient client, boolean remember) {
         String normalizedPhone = PhoneSupport.requireMainlandPhone(phone);
+        // BUG4：缺/空验证码在到达短信服务商前先拦截，避免误报为 502 SMS_PROVIDER_ERROR。
+        if (code == null || code.trim().isEmpty()) {
+            throw new AuthException(400, "SMS_CODE_REQUIRED", "请输入验证码");
+        }
+        String trimmedCode = code.trim();
         String phoneHash = PhoneSupport.hashPhone(normalizedPhone, smsProperties.getPhoneHashPepper());
         String providerOutId = smsRateLimiter.getPendingProviderOutId(SmsScene.LOGIN, phoneHash).orElse(null);
         MobileSmsAuthProvider.VerifyResult verifyResult = smsProvider.checkVerifyCode(
-                new MobileSmsAuthProvider.VerifyRequest(normalizedPhone, code, providerOutId, SmsScene.LOGIN));
+                new MobileSmsAuthProvider.VerifyRequest(normalizedPhone, trimmedCode, providerOutId, SmsScene.LOGIN));
         if (!verifyResult.success()) {
+            smsRateLimiter.recordVerifyFailure(SmsScene.LOGIN, phoneHash);
             throw new AuthException(401, "SMS_CODE_INVALID", "验证码错误或已过期，请重新获取");
         }
+        smsRateLimiter.clearVerifyFailures(SmsScene.LOGIN, phoneHash);
         smsRateLimiter.clearPendingCode(SmsScene.LOGIN, phoneHash);
 
         AuthUser user = userRepository.findByPhoneHash(phoneHash)
@@ -143,7 +150,7 @@ public class LoginService {
         if (count >= 5) {
             bucketStore.setValue(lockKey(account), "1", LOCK_WINDOW);
             auditLogService.high("login.password.locked", null, null, java.util.Map.of("account", account));
-            return new AuthException(423, "CAPTCHA_REQUIRED", "登录失败次数较多，请稍后再试");
+            return new AuthException(423, "CAPTCHA_REQUIRED", "登录失败次数较多，请完成图形验证码后重试");
         }
         auditLogService.info("login.password.failed", null, null, java.util.Map.of("account", account, "failure_count", count));
         return new AuthException(401, "BAD_CREDENTIALS", "账号或密码不正确");

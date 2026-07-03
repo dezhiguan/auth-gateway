@@ -37,7 +37,7 @@ public final class PhoneSupport {
     public static String requireMainlandPhone(String phone) {
         String normalized = normalizePhone(phone);
         if (!isMainlandPhone(normalized)) {
-            throw new SmsException(400, "PHONE_FORMAT_INVALID", "phone must be a valid mainland China mobile number");
+            throw new SmsException(400, "PHONE_FORMAT_INVALID", "请输入正确的手机号（11 位大陆手机号）");
         }
         return normalized;
     }

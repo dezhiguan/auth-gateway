@@ -45,7 +45,27 @@ public class SmsAuthRateLimiter {
         return store.getRemainingTtlSeconds(key("authgw:sms:send:cooldown", scene, phoneHash)).orElse(0L);
     }
 
+    // 单个验证码允许的最大错误校验次数，达到即作废，防止对 6 位码暴力破解。
+    private static final int VERIFY_FAIL_LIMIT = 5;
+
+    /** 记录一次验证码校验失败；累计达到上限即作废当前验证码，强制重新获取。 */
+    public void recordVerifyFailure(SmsScene scene, String phoneHash) {
+        long fails = store.increment(key("authgw:sms:verify:fail", scene, phoneHash), CODE_TTL);
+        if (fails >= VERIFY_FAIL_LIMIT) {
+            log.warn("SMS verify failures exceeded, invalidating code, scene={}", scene);
+            clearPendingCode(scene, phoneHash);
+            store.delete(key("authgw:sms:verify:fail", scene, phoneHash));
+        }
+    }
+
+    /** 校验成功或重新下发验证码时清零错误计数。 */
+    public void clearVerifyFailures(SmsScene scene, String phoneHash) {
+        store.delete(key("authgw:sms:verify:fail", scene, phoneHash));
+    }
+
     public void storePendingCode(SmsScene scene, String phoneHash, String codeHash, String providerOutId) {
+        // 重新下发验证码时清零上一个码的错误计数，避免旧计数误伤新码。
+        store.delete(key("authgw:sms:verify:fail", scene, phoneHash));
         store.setValue(key("authgw:sms:pending:code", scene, phoneHash), codeHash, CODE_TTL);
         String outIdKey = key("authgw:sms:pending:provider-out-id", scene, phoneHash);
         if (providerOutId == null || providerOutId.isBlank()) {
