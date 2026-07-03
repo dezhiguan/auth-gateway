@@ -86,6 +86,11 @@ public class LoginService {
         }
         String trimmedCode = code.trim();
         String phoneHash = PhoneSupport.hashPhone(normalizedPhone, smsProperties.getPhoneHashPepper());
+        // BUG5：验证码由短信服务商在云端校验，清本地 pending 无法作废云端验证码，必须在“调云端校验之前”
+        // 用本地失败计数拦截——同一手机号错误达上限即拒绝继续校验，直到重新获取验证码（发码时清零计数）。
+        if (smsRateLimiter.isVerifyBlocked(SmsScene.LOGIN, phoneHash)) {
+            throw new AuthException(429, "SMS_VERIFY_TOO_MANY", "验证码错误次数过多，请重新获取验证码");
+        }
         String providerOutId = smsRateLimiter.getPendingProviderOutId(SmsScene.LOGIN, phoneHash).orElse(null);
         MobileSmsAuthProvider.VerifyResult verifyResult = smsProvider.checkVerifyCode(
                 new MobileSmsAuthProvider.VerifyRequest(normalizedPhone, trimmedCode, providerOutId, SmsScene.LOGIN));

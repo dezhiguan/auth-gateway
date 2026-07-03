@@ -45,17 +45,20 @@ public class SmsAuthRateLimiter {
         return store.getRemainingTtlSeconds(key("authgw:sms:send:cooldown", scene, phoneHash)).orElse(0L);
     }
 
-    // 单个验证码允许的最大错误校验次数，达到即作废，防止对 6 位码暴力破解。
+    // 同一手机号在一个验证码有效期内允许的最大错误校验次数，达到即拒绝继续校验，防止对 6 位码暴力破解。
     private static final int VERIFY_FAIL_LIMIT = 5;
 
-    /** 记录一次验证码校验失败；累计达到上限即作废当前验证码，强制重新获取。 */
+    /** 记录一次验证码校验失败（累加计数，随验证码 TTL 过期）。 */
     public void recordVerifyFailure(SmsScene scene, String phoneHash) {
-        long fails = store.increment(key("authgw:sms:verify:fail", scene, phoneHash), CODE_TTL);
-        if (fails >= VERIFY_FAIL_LIMIT) {
-            log.warn("SMS verify failures exceeded, invalidating code, scene={}", scene);
-            clearPendingCode(scene, phoneHash);
-            store.delete(key("authgw:sms:verify:fail", scene, phoneHash));
-        }
+        store.increment(key("authgw:sms:verify:fail", scene, phoneHash), CODE_TTL);
+    }
+
+    /**
+     * 错误次数是否已达上限。达到后应在“调用云端短信服务商校验之前”直接拒绝——因为验证码由服务商在云端
+     * 校验，清本地 pending 无法作废云端验证码，只能靠本地计数拦截继续尝试。
+     */
+    public boolean isVerifyBlocked(SmsScene scene, String phoneHash) {
+        return store.getCounter(key("authgw:sms:verify:fail", scene, phoneHash)) >= VERIFY_FAIL_LIMIT;
     }
 
     /** 校验成功或重新下发验证码时清零错误计数。 */
