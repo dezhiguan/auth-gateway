@@ -90,21 +90,22 @@ public class PasswordResetService {
     }
 
     public ResetInitResult init(String account, String phone) {
+        // 手机号格式校验与账号无关，直接 400 提示不构成枚举信道。
+        String normalizedPhone = PhoneSupport.requireMainlandPhone(phone);
+        String phoneHash = PhoneSupport.hashPhone(normalizedPhone, smsProperties.getPhoneHashPepper());
+        String ipHash = PhoneSupport.hashIp("password-reset", smsProperties.getPhoneHashPepper());
+        // 限流必须在账号匹配之前按提交手机号统一检查并计数：若只对匹配成功的请求限流，
+        // 429 的有无就成了探测"账号+手机号是否匹配"的枚举侧信道。
+        smsRateLimiter.checkSendAllowed(SmsScene.RESET, phoneHash, ipHash, PhoneSupport.maskPhone(normalizedPhone));
+        smsRateLimiter.recordSend(SmsScene.RESET, phoneHash, ipHash);
         findResettableUser(account).ifPresent(user -> {
-            String normalizedPhone = normalizeOptionalPhone(phone);
-            if (StringUtils.hasText(user.phoneHash())
-                    && StringUtils.hasText(normalizedPhone)
-                    && user.phoneHash().equals(PhoneSupport.hashPhone(normalizedPhone, smsProperties.getPhoneHashPepper()))) {
+            if (user.phoneHash().equals(phoneHash)) {
                 String code = resolveCode();
-                String phoneHash = PhoneSupport.hashPhone(normalizedPhone, smsProperties.getPhoneHashPepper());
-                String ipHash = PhoneSupport.hashIp("password-reset", smsProperties.getPhoneHashPepper());
-                smsRateLimiter.checkSendAllowed(SmsScene.RESET, phoneHash, ipHash, PhoneSupport.maskPhone(normalizedPhone));
                 try {
                     MobileSmsAuthProvider.SendResult result = smsProvider.sendVerifyCode(
                             new MobileSmsAuthProvider.SendRequest(normalizedPhone, SmsScene.RESET, code));
                     String codeHash = PhoneSupport.hashCode(code, smsProperties.getPhoneHashPepper());
                     smsRateLimiter.storePendingCode(SmsScene.RESET, phoneHash, codeHash, result.outId());
-                    smsRateLimiter.recordSend(SmsScene.RESET, phoneHash, ipHash);
                 } catch (SmsException ex) {
                     throw ex;
                 } catch (RuntimeException ex) {
@@ -182,10 +183,23 @@ public class PasswordResetService {
     }
 
     private Optional<AuthUser> findResettableUser(String account) {
-        Optional<AuthUser> byPhone = findByPhoneAccount(account);
-        Optional<AuthUser> user = byPhone.isPresent() ? byPhone : userRepository.findByAccount(account);
+        Optional<AuthUser> user = findByPhoneAccount(account);
+        if (user.isEmpty()) {
+            user = findByEmailAccount(account);
+        }
+        if (user.isEmpty()) {
+            user = userRepository.findByAccount(account);
+        }
         return user.filter(candidate -> "ACTIVE".equalsIgnoreCase(candidate.status())
                 && StringUtils.hasText(candidate.phoneHash()));
+    }
+
+    private Optional<AuthUser> findByEmailAccount(String account) {
+        if (!EmailSupport.isValidEmail(account)) {
+            return Optional.empty();
+        }
+        return userRepository.findByEmailHash(
+                EmailSupport.hashEmail(account, smsProperties.getPhoneHashPepper()));
     }
 
     private Optional<AuthUser> findByPhoneAccount(String account) {

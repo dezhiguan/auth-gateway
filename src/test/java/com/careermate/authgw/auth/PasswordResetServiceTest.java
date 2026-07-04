@@ -63,6 +63,11 @@ class PasswordResetServiceTest {
         assertThat(result.maskedPhone()).isEqualTo(PasswordResetService.ENUMERATION_SAFE_MASKED_PHONE);
         assertThat(result.ticketRequired()).isTrue();
         verify(smsProvider, never()).sendVerifyCode(any());
+        // 账号不存在时限流照样检查+计数，与存在时行为一致，429 不构成枚举信道
+        String phoneHash = PhoneSupport.hashPhone("+8613800000000", smsProperties.getPhoneHashPepper());
+        String ipHash = PhoneSupport.hashIp("password-reset", smsProperties.getPhoneHashPepper());
+        verify(smsRateLimiter).checkSendAllowed(SmsScene.RESET, phoneHash, ipHash, PhoneSupport.maskPhone("+8613800000000"));
+        verify(smsRateLimiter).recordSend(SmsScene.RESET, phoneHash, ipHash);
     }
 
     @Test
@@ -92,7 +97,68 @@ class PasswordResetServiceTest {
 
         assertThat(result.ticketRequired()).isTrue();
         verify(smsProvider, never()).sendVerifyCode(any());
+        // 不匹配时限流同样检查+计数（与匹配成功不可区分）
+        String submittedPhoneHash = PhoneSupport.hashPhone("+8613900000000", smsProperties.getPhoneHashPepper());
+        verify(smsRateLimiter).checkSendAllowed(org.mockito.ArgumentMatchers.eq(SmsScene.RESET),
+                org.mockito.ArgumentMatchers.eq(submittedPhoneHash), anyString(), anyString());
+        verify(smsRateLimiter).recordSend(org.mockito.ArgumentMatchers.eq(SmsScene.RESET),
+                org.mockito.ArgumentMatchers.eq(submittedPhoneHash), anyString());
+    }
+
+    @Test
+    void initRejectsInvalidPhoneFormatWithoutTouchingAccountOrLimiter() {
+        assertThatThrownBy(() -> service().init("amy", "123"))
+                .isInstanceOfSatisfying(com.careermate.authgw.sms.SmsException.class, ex -> {
+                    assertThat(ex.status()).isEqualTo(400);
+                    assertThat(ex.code()).isEqualTo("PHONE_FORMAT_INVALID");
+                });
+        verify(userRepository, never()).findByAccount(anyString());
         verify(smsRateLimiter, never()).checkSendAllowed(any(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void initThrowsRateLimitUniformlyEvenWhenAccountDoesNotExist() {
+        org.mockito.Mockito.doThrow(new com.careermate.authgw.sms.SmsException(429, "SMS_SEND_TOO_FREQUENT", "验证码已发送，请稍后再试"))
+                .when(smsRateLimiter).checkSendAllowed(any(), anyString(), anyString(), anyString());
+
+        assertThatThrownBy(() -> service().init("missing", "13800000000"))
+                .isInstanceOfSatisfying(com.careermate.authgw.sms.SmsException.class,
+                        ex -> assertThat(ex.status()).isEqualTo(429));
+        // 限流发生在账号查询之前，攻击者无法用 429 探测账号
+        verify(userRepository, never()).findByAccount(anyString());
+        verify(smsProvider, never()).sendVerifyCode(any());
+    }
+
+    @Test
+    void initFindsUserByEmailAndSendsSms() {
+        String email = "user@example.com";
+        String emailHash = EmailSupport.hashEmail(email, smsProperties.getPhoneHashPepper());
+        String phoneHash = PhoneSupport.hashPhone("+8613800000000", smsProperties.getPhoneHashPepper());
+        when(userRepository.findByEmailHash(emailHash))
+                .thenReturn(Optional.of(new AuthUser(7, phoneHash, emailHash, "amy", "pwd", "USER", 2, "ACTIVE")));
+        when(smsProvider.sendVerifyCode(any())).thenReturn(new MobileSmsAuthProvider.SendResult(true, "out-1", "req-1", "OK", "ok"));
+
+        PasswordResetService.ResetInitResult result = service().init(email, "13800000000");
+
+        assertThat(result.ticketRequired()).isTrue();
+        verify(smsProvider).sendVerifyCode(any());
+        verify(smsRateLimiter).storePendingCode(org.mockito.ArgumentMatchers.eq(SmsScene.RESET),
+                org.mockito.ArgumentMatchers.eq(phoneHash), anyString(), org.mockito.ArgumentMatchers.eq("out-1"));
+    }
+
+    @Test
+    void verifyFindsUserByEmailAndIssuesResetTicket() {
+        String email = "user@example.com";
+        String emailHash = EmailSupport.hashEmail(email, smsProperties.getPhoneHashPepper());
+        String phoneHash = PhoneSupport.hashPhone("+8613800000000", smsProperties.getPhoneHashPepper());
+        AuthUser user = new AuthUser(7, phoneHash, emailHash, "amy", "pwd", "USER", 2, "ACTIVE");
+        when(userRepository.findByEmailHash(emailHash)).thenReturn(Optional.of(user));
+        when(codeStore.getValue("authgw:password-reset:confirm:lock:7")).thenReturn(Optional.empty());
+        when(smsRateLimiter.getPendingProviderOutId(SmsScene.RESET, phoneHash)).thenReturn(Optional.of("out-1"));
+        when(smsProvider.checkVerifyCode(any())).thenReturn(new MobileSmsAuthProvider.VerifyResult(true, "+8613800000000", "req-1", "OK", "ok", "PASS"));
+        when(jwtSigner.sign(any(com.nimbusds.jwt.JWTClaimsSet.class))).thenReturn("reset-ticket");
+
+        assertThat(service().verify(email, "13800000000", "123456")).isEqualTo("reset-ticket");
     }
 
     @Test
