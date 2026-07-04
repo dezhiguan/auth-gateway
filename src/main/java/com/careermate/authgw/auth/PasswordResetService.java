@@ -89,11 +89,13 @@ public class PasswordResetService {
         this.auditLogService = auditLogService;
     }
 
-    public ResetInitResult init(String account, String phone) {
+    public ResetInitResult init(String account, String phone, String clientIp) {
         // 手机号格式校验与账号无关，直接 400 提示不构成枚举信道。
         String normalizedPhone = PhoneSupport.requireMainlandPhone(phone);
         String phoneHash = PhoneSupport.hashPhone(normalizedPhone, smsProperties.getPhoneHashPepper());
-        String ipHash = PhoneSupport.hashIp("password-reset", smsProperties.getPhoneHashPepper());
+        // 按调用方真实 IP 计数（此前是常量伪 IP，全站共享一个桶，前置限流后会被刷成全站拒绝）
+        String ipHash = PhoneSupport.hashIp(
+                StringUtils.hasText(clientIp) ? clientIp : "unknown", smsProperties.getPhoneHashPepper());
         // 限流必须在账号匹配之前按提交手机号统一检查并计数：若只对匹配成功的请求限流，
         // 429 的有无就成了探测"账号+手机号是否匹配"的枚举侧信道。
         smsRateLimiter.checkSendAllowed(SmsScene.RESET, phoneHash, ipHash, PhoneSupport.maskPhone(normalizedPhone));

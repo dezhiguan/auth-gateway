@@ -28,7 +28,8 @@ class PasswordResetControllerTest {
 
     @Test
     void initReturnsEnumerationSafeResponse() throws Exception {
-        when(passwordResetService.init("amy", "13800000000"))
+        when(passwordResetService.init(org.mockito.ArgumentMatchers.eq("amy"),
+                org.mockito.ArgumentMatchers.eq("13800000000"), org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(new PasswordResetService.ResetInitResult("***********", true));
 
         mockMvc.perform(post("/auth/password/reset/init")
@@ -80,7 +81,8 @@ class PasswordResetControllerTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error").value("SMS_CODE_INVALID"));
 
-        when(passwordResetService.init("amy", "13900000000"))
+        when(passwordResetService.init(org.mockito.ArgumentMatchers.eq("amy"),
+                org.mockito.ArgumentMatchers.eq("13900000000"), org.mockito.ArgumentMatchers.anyString()))
                 .thenThrow(new SmsException(502, "SMS_PROVIDER_ERROR", "provider down"));
 
         mockMvc.perform(post("/auth/password/reset/init")

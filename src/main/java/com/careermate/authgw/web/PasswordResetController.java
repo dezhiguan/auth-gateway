@@ -5,10 +5,13 @@ import com.careermate.authgw.auth.OAuthClient;
 import com.careermate.authgw.auth.PasswordResetService;
 import com.careermate.authgw.auth.TokenPair;
 import com.careermate.authgw.oauth.ClientAuthenticator;
+import com.careermate.authgw.sms.PhoneSupport;
 import com.careermate.authgw.sms.SmsException;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.Map;
+import org.springframework.util.StringUtils;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -27,9 +30,19 @@ public class PasswordResetController {
     }
 
     @PostMapping("/auth/password/reset/init")
-    public ResetInitResponse init(@RequestBody ResetInitRequest request) {
-        PasswordResetService.ResetInitResult result = passwordResetService.init(request.account(), request.phone());
+    public ResetInitResponse init(@RequestBody ResetInitRequest request, HttpServletRequest servletRequest) {
+        PasswordResetService.ResetInitResult result =
+                passwordResetService.init(request.account(), request.phone(), clientIp(servletRequest));
         return new ResetInitResponse(result.maskedPhone(), result.ticketRequired());
+    }
+
+    /** 与 SmsController 同口径：优先入口层写入的 X-Forwarded-For，退回对端地址。 */
+    private String clientIp(HttpServletRequest request) {
+        String forwardedFor = request.getHeader("X-Forwarded-For");
+        if (StringUtils.hasText(forwardedFor)) {
+            return PhoneSupport.normalizeIp(forwardedFor);
+        }
+        return PhoneSupport.normalizeIp(request.getRemoteAddr());
     }
 
     @PostMapping("/auth/password/reset/verify")
