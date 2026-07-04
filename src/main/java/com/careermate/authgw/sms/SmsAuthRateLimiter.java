@@ -28,13 +28,17 @@ public class SmsAuthRateLimiter {
             log.warn("SMS send cooldown, phone={}", maskedPhone);
             throw new SmsException(429, "SMS_SEND_TOO_FREQUENT", "验证码已发送，请稍后再试");
         }
+        // 每日上限文案与每分钟/冷却区分：达到日上限"稍后再试"会误导（其实要等到明日），单独提示。
         assertUnderLimit(store.getCounter(key("authgw:sms:send:day", scene, phoneHash)),
-                properties.getPhoneDaySendLimit(), "SMS_PHONE_DAY_LIMITED", "send phone day", maskedPhone);
+                properties.getPhoneDaySendLimit(), "SMS_PHONE_DAY_LIMITED", "send phone day", maskedPhone,
+                "今日验证码发送已达上限，请明日再试");
         assertUnderLimit(store.getCounter(key("authgw:sms:send:ip:minute", scene, ipHash)),
-                properties.getIpMinuteSendLimit(), "SMS_IP_MINUTE_LIMITED", "send ip minute", ipHash);
+                properties.getIpMinuteSendLimit(), "SMS_IP_MINUTE_LIMITED", "send ip minute", ipHash,
+                "验证码发送过于频繁，请稍后再试");
         // 每 IP 每天上限（原仅有每分钟窗口，无日上限 → 单 IP 可持续轰炸）。补齐日上限封住持续滥用。
         assertUnderLimit(store.getCounter(key("authgw:sms:send:ip:day", scene, ipHash)),
-                properties.getIpDaySendLimit(), "SMS_IP_DAY_LIMITED", "send ip day", ipHash);
+                properties.getIpDaySendLimit(), "SMS_IP_DAY_LIMITED", "send ip day", ipHash,
+                "今日验证码发送已达上限，请明日再试");
     }
 
     public void recordSend(SmsScene scene, String phoneHash, String ipHash) {
@@ -97,10 +101,11 @@ public class SmsAuthRateLimiter {
         store.delete(key("authgw:sms:pending:provider-out-id", scene, phoneHash));
     }
 
-    private void assertUnderLimit(long count, int limit, String code, String label, String subject) {
+    private void assertUnderLimit(
+            long count, int limit, String code, String label, String subject, String message) {
         if (count >= limit) {
             log.warn("SMS rate limit {}, subject={}, count={}", label, subject, count);
-            throw new SmsException(429, code, "验证码发送过于频繁，请稍后再试");
+            throw new SmsException(429, code, message);
         }
     }
 

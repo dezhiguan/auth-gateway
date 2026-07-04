@@ -34,7 +34,10 @@ class SmsAuthRateLimiterTest {
         when(store.getCounter("authgw:sms:send:day:reset:phone")).thenReturn(10L);
 
         assertThatThrownBy(() -> limiter().checkSendAllowed(SmsScene.RESET, "phone", "ip", "138****0000"))
-                .isInstanceOfSatisfying(SmsException.class, ex -> assertThat(ex.code()).isEqualTo("SMS_PHONE_DAY_LIMITED"));
+                .isInstanceOfSatisfying(SmsException.class, ex -> {
+                    assertThat(ex.code()).isEqualTo("SMS_PHONE_DAY_LIMITED");
+                    assertThat(ex.getMessage()).isEqualTo("今日验证码发送已达上限，请明日再试");
+                });
     }
 
     @Test
@@ -44,7 +47,10 @@ class SmsAuthRateLimiterTest {
         when(store.getCounter("authgw:sms:send:ip:minute:bind_phone:ip")).thenReturn(30L);
 
         assertThatThrownBy(() -> limiter().checkSendAllowed(SmsScene.BIND_PHONE, "phone", "ip", "138****0000"))
-                .isInstanceOfSatisfying(SmsException.class, ex -> assertThat(ex.code()).isEqualTo("SMS_IP_MINUTE_LIMITED"));
+                .isInstanceOfSatisfying(SmsException.class, ex -> {
+                    assertThat(ex.code()).isEqualTo("SMS_IP_MINUTE_LIMITED");
+                    assertThat(ex.getMessage()).isEqualTo("验证码发送过于频繁，请稍后再试");
+                });
     }
 
     @Test
@@ -55,7 +61,10 @@ class SmsAuthRateLimiterTest {
         when(store.getCounter("authgw:sms:send:ip:day:register:ip")).thenReturn(100L);
 
         assertThatThrownBy(() -> limiter().checkSendAllowed(SmsScene.REGISTER, "phone", "ip", "138****0000"))
-                .isInstanceOfSatisfying(SmsException.class, ex -> assertThat(ex.code()).isEqualTo("SMS_IP_DAY_LIMITED"));
+                .isInstanceOfSatisfying(SmsException.class, ex -> {
+                    assertThat(ex.code()).isEqualTo("SMS_IP_DAY_LIMITED");
+                    assertThat(ex.getMessage()).isEqualTo("今日验证码发送已达上限，请明日再试");
+                });
     }
 
     @Test
