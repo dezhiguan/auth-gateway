@@ -50,17 +50,11 @@ public class TokenService {
             throw new AuthException(401, "REFRESH_SESSION_REVOKED", "refresh session is revoked");
         }
 
-        // 旋转宽限期：已旋转的 token 在窗口内被再次使用，视作并发双刷（多标签页同时 401、
-        // 弱网重试），补发一对新令牌而不按重放灭族；超出窗口才是真正的重放攻击。
+        // 已旋转的 token 又被提交：可能是并发双刷、也可能是「客户端从未收到旋转响应」
+        // （笔记本合盖休眠、响应在途丢失）后带着旧令牌回来，还可能是真正的重放攻击。交给
+        // handleRotatedReuse 用「宽限期 + 后继是否已被消费」两个信号区分，避免误灭族。
         if (refresh.rotatedAt() != null) {
-            if (!withinRotationGrace(refresh.rotatedAt())) {
-                eventPublisher.publish("refresh.replay_detected", Map.of("family_id", refresh.familyId()));
-                revokeFamily(refresh.familyId());
-                throw new AuthException(401, "REFRESH_REPLAY_DETECTED", "refresh token replay detected");
-            }
-            eventPublisher.publish("refresh.grace_reuse", Map.of("family_id", refresh.familyId()));
-            return tokenIssuer.issueRotatedRefresh(
-                    user, client, refresh.audience(), refresh.sessionId(), refresh.familyId(), refreshTtl(refresh));
+            return handleRotatedReuse(refresh, user, client);
         }
 
         int rotated = jdbcTemplate.update("""
@@ -70,17 +64,52 @@ public class TokenService {
                         """,
                 tokenHasher.sha256Hex(refreshToken));
         if (rotated == 0) {
-            // 读到时未旋转、更新时已被旋转 = 毫秒级并发竞争，必然落在宽限期内，按双刷补发。
-            if (properties.getRefreshRotationGraceSeconds() <= 0) {
-                eventPublisher.publish("refresh.replay_detected", Map.of("family_id", refresh.familyId()));
-                revokeFamily(refresh.familyId());
-                throw new AuthException(401, "REFRESH_REPLAY_DETECTED", "refresh token replay detected");
-            }
-            eventPublisher.publish("refresh.grace_reuse", Map.of("family_id", refresh.familyId()));
+            // 读到时未旋转、更新时已被旋转 = 毫秒级并发竞争。重新读取按重用路径处理（必落宽限期内）。
+            return handleRotatedReuse(findRefresh(refreshToken), user, client);
         }
 
-        return tokenIssuer.issueRotatedRefresh(
-                user, client, refresh.audience(), refresh.sessionId(), refresh.familyId(), refreshTtl(refresh));
+        // 正常旋转：签发后继并回填「前驱→后继」链接。
+        return issueAndLink(refresh, user, client);
+    }
+
+    /**
+     * 已旋转 refresh token 被再次使用的处置：
+     * <ul>
+     *   <li>宽限期内 → 毫秒级并发双刷/弱网重试，良性补发（保持原行为）；</li>
+     *   <li>超出宽限期但后继令牌从未被消费 → 客户端从未收到旋转响应（合盖休眠、响应丢失）的
+     *       合法重投递：吊销孤儿后继、从会话补发新令牌，<b>不灭族</b>；</li>
+     *   <li>超出宽限期且后继已被消费（链已前进）或缺失 → 真正的重放/分叉 → 灭族。</li>
+     * </ul>
+     */
+    private TokenPair handleRotatedReuse(RefreshRecord refresh, AuthUser user, OAuthClient client) {
+        if (withinRotationGrace(refresh.rotatedAt())) {
+            eventPublisher.publish("refresh.grace_reuse", Map.of("family_id", refresh.familyId()));
+            return issueAndLink(refresh, user, client);
+        }
+        RefreshRecord successor = findRefreshOrNull(refresh.replacedByHash());
+        if (successor != null
+                && successor.revokedAt() == null
+                && !successor.expired()
+                && successor.rotatedAt() == null) {
+            // 后继从未被使用 → 客户端没拿到过它 → 合法重投递：吊销孤儿后继，从会话补发新令牌，不灭族。
+            eventPublisher.publish("refresh.redelivery", Map.of("family_id", refresh.familyId()));
+            revokeToken(successor.tokenHash());
+            return issueAndLink(refresh, user, client);
+        }
+        eventPublisher.publish("refresh.replay_detected", Map.of("family_id", refresh.familyId()));
+        revokeFamily(refresh.familyId());
+        throw new AuthException(401, "REFRESH_REPLAY_DETECTED", "refresh token replay detected");
+    }
+
+    /** 从会话签发一枚新的 refresh token，并把前驱（本次提交的令牌）指向它，形成旋转链。 */
+    private TokenPair issueAndLink(RefreshRecord predecessor, AuthUser user, OAuthClient client) {
+        TokenPair pair = tokenIssuer.issueRotatedRefresh(
+                user, client, predecessor.audience(), predecessor.sessionId(),
+                predecessor.familyId(), refreshTtl(predecessor));
+        jdbcTemplate.update(
+                "UPDATE refresh_tokens SET replaced_by_hash = ? WHERE token_hash = ?",
+                tokenHasher.sha256Hex(pair.refreshToken()), predecessor.tokenHash());
+        return pair;
     }
 
     private boolean withinRotationGrace(java.time.Instant rotatedAt) {
@@ -144,16 +173,18 @@ public class TokenService {
         eventPublisher.publish("session.revoked", Map.of("user_id", userId, "reason", "logout-all"));
     }
 
+    private static final String REFRESH_SELECT = """
+            SELECT rt.token_hash, rt.family_id, rt.session_id, rt.expires_at,
+                   rt.rotated_at, rt.revoked_at, rt.replaced_by_hash,
+                   s.user_id, s.session_version, s.revoked_at AS session_revoked_at,
+                   s.target_audience AS audience, s.refresh_ttl_seconds
+            FROM refresh_tokens rt
+            JOIN auth_sessions s ON s.session_id = rt.session_id
+            WHERE rt.token_hash = ?
+            """;
+
     private RefreshRecord findRefresh(String refreshToken) {
-        return jdbcTemplate.query("""
-                        SELECT rt.token_hash, rt.family_id, rt.session_id, rt.expires_at,
-                               rt.rotated_at, rt.revoked_at,
-                               s.user_id, s.session_version, s.revoked_at AS session_revoked_at,
-                               s.target_audience AS audience, s.refresh_ttl_seconds
-                        FROM refresh_tokens rt
-                        JOIN auth_sessions s ON s.session_id = rt.session_id
-                        WHERE rt.token_hash = ?
-                        """,
+        return jdbcTemplate.query(REFRESH_SELECT,
                 rs -> {
                     if (!rs.next()) {
                         throw new AuthException(401, "REFRESH_TOKEN_INVALID", "refresh token is invalid");
@@ -161,6 +192,16 @@ public class TokenService {
                     return mapRefresh(rs);
                 },
                 tokenHasher.sha256Hex(refreshToken));
+    }
+
+    /** 按 token 哈希查后继令牌记录；不存在返回 null（重投递判定用，哈希为空直接返回 null）。 */
+    private RefreshRecord findRefreshOrNull(String tokenHash) {
+        if (tokenHash == null) {
+            return null;
+        }
+        return jdbcTemplate.query(REFRESH_SELECT,
+                rs -> rs.next() ? mapRefresh(rs) : null,
+                tokenHash);
     }
 
     private RefreshRecord mapRefresh(ResultSet rs) throws SQLException {
@@ -181,7 +222,14 @@ public class TokenService {
                 rs.getLong("session_version"),
                 rs.getTimestamp("session_revoked_at") != null,
                 rs.getString("audience"),
-                refreshTtlSeconds);
+                refreshTtlSeconds,
+                rs.getString("replaced_by_hash"));
+    }
+
+    private void revokeToken(String tokenHash) {
+        jdbcTemplate.update(
+                "UPDATE refresh_tokens SET revoked_at = COALESCE(revoked_at, now()) WHERE token_hash = ?",
+                tokenHash);
     }
 
     private void revokeFamily(String familyId) {
@@ -227,7 +275,8 @@ public class TokenService {
             long sessionVersion,
             boolean sessionRevoked,
             String audience,
-            Long refreshTtlSeconds) {
+            Long refreshTtlSeconds,
+            String replacedByHash) {
         boolean expired() {
             return expiresAt.isBefore(java.time.Instant.now());
         }
