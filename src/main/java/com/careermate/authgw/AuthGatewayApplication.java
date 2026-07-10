@@ -6,8 +6,10 @@ import com.careermate.authgw.sms.SmsProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
+@EnableScheduling
 @EnableConfigurationProperties({AuthProperties.class, JwksProperties.class, SmsProperties.class})
 public class AuthGatewayApplication {
 
