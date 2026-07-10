@@ -239,6 +239,37 @@ class AuthCoreServicesTest {
         verify(userRepository, never()).findByPhoneHash(anyString());
     }
 
+    // 暴力破解锁：错误达上限即在调用云端校验前拦截，返回友好 429
+    @Test
+    void loginMobileBlockedWhenTooManyVerifyFailures() {
+        String phone = "+8613800000000";
+        String phoneHash = PhoneSupport.hashPhone(phone, smsProperties.getPhoneHashPepper());
+        when(smsRateLimiter.isVerifyBlocked(SmsScene.LOGIN, phoneHash)).thenReturn(true);
+
+        assertThatThrownBy(() -> loginService().loginMobile("13800000000", "000000", "careermate-api", client()))
+                .isInstanceOfSatisfying(AuthException.class, ex -> {
+                    assertThat(ex.status()).isEqualTo(429);
+                    assertThat(ex.code()).isEqualTo("SMS_VERIFY_TOO_MANY");
+                    assertThat(ex.getMessage()).isEqualTo("验证码错误次数过多，请重新获取验证码");
+                });
+        // 被锁时不应再调用云端短信校验
+        verify(smsProvider, never()).checkVerifyCode(any());
+    }
+
+    // 暴力破解锁：验证码错误时累加失败计数（累到上限即触发上面的拦截）
+    @Test
+    void loginMobileRecordsVerifyFailureOnWrongCode() {
+        String phone = "+8613800000000";
+        String phoneHash = PhoneSupport.hashPhone(phone, smsProperties.getPhoneHashPepper());
+        when(smsRateLimiter.getPendingProviderOutId(SmsScene.LOGIN, phoneHash)).thenReturn(Optional.empty());
+        when(smsProvider.checkVerifyCode(any()))
+                .thenReturn(new MobileSmsAuthProvider.VerifyResult(false, phone, "req-1", "BAD", "bad", "FAIL"));
+
+        assertThatThrownBy(() -> loginService().loginMobile("13800000000", "000000", "careermate-api", client()))
+                .isInstanceOf(AuthException.class);
+        verify(smsRateLimiter).recordVerifyFailure(SmsScene.LOGIN, phoneHash);
+    }
+
     @Test
     void loginMobileRejectsInactiveUser() {
         String phone = "+8613800000000";
