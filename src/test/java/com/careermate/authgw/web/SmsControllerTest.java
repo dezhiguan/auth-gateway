@@ -129,7 +129,7 @@ class SmsControllerTest {
     @Test
     void sendAllowsRagforgeLoginForRegisteredMember() throws Exception {
         String phoneHash = PhoneSupport.hashPhone("13800000000", PEPPER);
-        AuthUser user = new AuthUser(7, phoneHash, null, "amy", null, "USER", 1, "ACTIVE");
+        AuthUser user = new AuthUser(7, phoneHash, null, "amy", null, "USER", 1, "ACTIVE", null);
         when(authUserRepository.findByPhoneHash(phoneHash)).thenReturn(Optional.of(user));
         when(membershipRepository.find(7, "ragforge"))
                 .thenReturn(Optional.of(new AppMembership(7, "ragforge", "USER", "ACTIVE")));

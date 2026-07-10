@@ -51,7 +51,8 @@ public class RegistrationService {
         this.auditLogService = auditLogService;
     }
 
-    public RegisterResult register(String phone, String smsCode, String username, String email, String rawPassword, String app) {
+    public RegisterResult register(String phone, String smsCode, String username, String email, String rawPassword,
+            String app, String termsVersion) {
         String normalizedApp = normalizeApp(app);
         String pepper = smsProperties.getPhoneHashPepper();
         String normalizedPhone = PhoneSupport.requireMainlandPhone(phone);
@@ -107,6 +108,10 @@ public class RegistrationService {
                 AuthUser created = userRepository.createFullUser(phoneHash, emailHash, normUsername, passwordHash);
                 userId = created.id();
                 linked = false;
+            }
+            // 记录协议同意（新注册用户在表单勾选协议时传入）
+            if (StringUtils.hasText(termsVersion)) {
+                userRepository.updateTermsAcceptance(userId, termsVersion);
             }
             membershipRepository.ensureMembership(userId, normalizedApp, "USER");
             auditLogService.info("register.success", userId, null,

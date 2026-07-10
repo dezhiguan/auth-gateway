@@ -31,7 +31,8 @@ public class RegistrationController {
                 request.username(),
                 request.email(),
                 request.password(),
-                request.app());
+                request.app(),
+                request.termsVersion());
         String message = result.linked()
                 ? "该手机号已注册，已为你关联并补全账号信息"
                 : "注册成功";
@@ -56,7 +57,8 @@ public class RegistrationController {
             String username,
             String email,
             String password,
-            String app) {
+            String app,
+            String termsVersion) {
     }
 
     public record RegisterResponse(long userId, boolean linked, String message) {

@@ -242,7 +242,7 @@ class OAuthServicesTest {
                 "consent-1", 12, "ragforge-admin-backend", Set.of("rag:search"),
                 List.of(100L), Instant.now().plusSeconds(300), null);
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), any())).thenReturn(List.of(consent));
-        when(userRepository.findById(12)).thenReturn(Optional.of(new AuthUser(12, "phone", null, "amy", "pwd", "USER", 5, "ACTIVE")));
+        when(userRepository.findById(12)).thenReturn(Optional.of(new AuthUser(12, "phone", null, "amy", "pwd", "USER", 5, "ACTIVE", null)));
         when(tokenIssuer.issueDelegationToken(12, "consent-1", client, "ragforge-admin-api", Set.of("rag:search"), List.of(100L), 5))
                 .thenReturn("delegated-token");
 

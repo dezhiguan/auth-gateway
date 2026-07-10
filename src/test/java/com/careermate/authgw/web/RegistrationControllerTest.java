@@ -23,13 +23,13 @@ class RegistrationControllerTest {
 
     @Test
     void registerReturnsCreatedMessageForNewUser() throws Exception {
-        when(registrationService.register("13800000000", "123456", "amy", "amy@example.com", "Passw0rd", "ragforge"))
+        when(registrationService.register("13800000000", "123456", "amy", "amy@example.com", "Passw0rd", "ragforge", "1.0"))
                 .thenReturn(new RegistrationService.RegisterResult(12, false));
 
         mockMvc.perform(post("/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"phone":"13800000000","smsCode":"123456","username":"amy","email":"amy@example.com","password":"Passw0rd","app":"ragforge"}
+                                {"phone":"13800000000","smsCode":"123456","username":"amy","email":"amy@example.com","password":"Passw0rd","app":"ragforge","termsVersion":"1.0"}
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.userId").value(12))
@@ -39,7 +39,7 @@ class RegistrationControllerTest {
 
     @Test
     void registerReturnsLinkedMessageForExistingUser() throws Exception {
-        when(registrationService.register("13800000000", "123456", null, null, null, "careermate"))
+        when(registrationService.register("13800000000", "123456", null, null, null, "careermate", null))
                 .thenReturn(new RegistrationService.RegisterResult(15, true));
 
         mockMvc.perform(post("/auth/register")
@@ -55,7 +55,7 @@ class RegistrationControllerTest {
 
     @Test
     void registerMapsAuthAndSmsExceptions() throws Exception {
-        when(registrationService.register("13800000000", "bad", null, null, null, "ragforge"))
+        when(registrationService.register("13800000000", "bad", null, null, null, "ragforge", null))
                 .thenThrow(new AuthException(401, "SMS_CODE_INVALID", "bad code"));
 
         mockMvc.perform(post("/auth/register")
@@ -66,7 +66,7 @@ class RegistrationControllerTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error").value("SMS_CODE_INVALID"));
 
-        when(registrationService.register("13900000000", "123456", null, null, null, "ragforge"))
+        when(registrationService.register("13900000000", "123456", null, null, null, "ragforge", null))
                 .thenThrow(new SmsException(429, "SMS_SEND_TOO_FREQUENT", "too frequent"));
 
         mockMvc.perform(post("/auth/register")

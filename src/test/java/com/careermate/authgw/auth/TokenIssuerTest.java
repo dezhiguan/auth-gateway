@@ -29,7 +29,7 @@ class TokenIssuerTest {
 
     @Test
     void issueUserTokensStoresSessionAndRefreshTokenAndSignsUserClaims() throws Exception {
-        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "ADMIN", 4, "ACTIVE");
+        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "ADMIN", 4, "ACTIVE", null);
         OAuthClient client = client(Set.of("ragforge-admin-api"));
         when(tokenHasher.sha256Hex(anyString())).thenReturn("refresh-hash");
         when(jwtSigner.sign(any(JWTClaimsSet.class))).thenReturn("signed-access");
@@ -55,7 +55,7 @@ class TokenIssuerTest {
 
     @Test
     void issueRotatedRefreshRejectsDisallowedAudience() {
-        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 4, "ACTIVE");
+        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 4, "ACTIVE", null);
 
         assertThatThrownBy(() -> issuer().issueRotatedRefresh(user, client(Set.of("careermate-api")),
                 "ragforge-admin-api", "sid", "family", 604800))

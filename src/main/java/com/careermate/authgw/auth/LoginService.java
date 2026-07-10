@@ -14,6 +14,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class LoginService {
 
+    static final String CURRENT_TERMS_VERSION = "1.0";
+
     private static final Duration FAIL_WINDOW = Duration.ofMinutes(30);
     private static final Duration LOCK_WINDOW = Duration.ofMinutes(15);
     // 失败达该次数后，之后每次登录都必须完成图形验证码（粘性），直到登录成功才解除。
@@ -58,15 +60,15 @@ public class LoginService {
         this.captchaService = captchaService;
     }
 
-    public TokenPair loginPassword(String account, String password, String targetAud, OAuthClient client) {
+    public LoginResult loginPassword(String account, String password, String targetAud, OAuthClient client) {
         return loginPassword(account, password, null, null, targetAud, client, false);
     }
 
-    public TokenPair loginPassword(String account, String password, String targetAud, OAuthClient client, boolean remember) {
+    public LoginResult loginPassword(String account, String password, String targetAud, OAuthClient client, boolean remember) {
         return loginPassword(account, password, null, null, targetAud, client, remember);
     }
 
-    public TokenPair loginPassword(
+    public LoginResult loginPassword(
             String account,
             String password,
             String captcha,
@@ -92,6 +94,12 @@ public class LoginService {
 
         AuthUser user = findPasswordLoginUser(account)
                 .orElseThrow(() -> fail(key, account));
+
+        // 注销冷静期账号拦截（优先于普通状态检查，返回专属错误码）
+        if ("PENDING_DELETION".equalsIgnoreCase(user.status())) {
+            throw new AuthException(423, "ACCOUNT_PENDING_DELETION", "您的账号正在注销中，如需撤销请在登录页点击「撤销注销」");
+        }
+
         if (!"ACTIVE".equalsIgnoreCase(user.status()) || !passwordHasher.matches(password, user.passwordHash())) {
             throw fail(key, account);
         }
@@ -102,14 +110,16 @@ public class LoginService {
         enforceRagForgeAccess(targetAud, user);
         auditLogService.info("login.password.success", user.id(), client.clientId(),
                 java.util.Map.of("target_aud", targetAud, "remember", remember));
-        return tokenIssuer.issueUserTokens(user, client, targetAud, remember);
+        TokenPair tokens = tokenIssuer.issueUserTokens(user, client, targetAud, remember);
+        boolean termsUpdateRequired = !CURRENT_TERMS_VERSION.equals(user.termsVersion());
+        return new LoginResult(tokens, termsUpdateRequired);
     }
 
-    public TokenPair loginMobile(String phone, String code, String targetAud, OAuthClient client) {
+    public LoginResult loginMobile(String phone, String code, String targetAud, OAuthClient client) {
         return loginMobile(phone, code, targetAud, client, false);
     }
 
-    public TokenPair loginMobile(String phone, String code, String targetAud, OAuthClient client, boolean remember) {
+    public LoginResult loginMobile(String phone, String code, String targetAud, OAuthClient client, boolean remember) {
         String normalizedPhone = PhoneSupport.requireMainlandPhone(phone);
         // BUG4：缺/空验证码在到达短信服务商前先拦截，避免误报为 502 SMS_PROVIDER_ERROR。
         if (code == null || code.trim().isEmpty()) {
@@ -117,7 +127,7 @@ public class LoginService {
         }
         String trimmedCode = code.trim();
         String phoneHash = PhoneSupport.hashPhone(normalizedPhone, smsProperties.getPhoneHashPepper());
-        // BUG5：验证码由短信服务商在云端校验，清本地 pending 无法作废云端验证码，必须在“调云端校验之前”
+        // BUG5：验证码由短信服务商在云端校验，清本地 pending 无法作废云端验证码，必须在"调云端校验之前"
         // 用本地失败计数拦截——同一手机号错误达上限即拒绝继续校验，直到重新获取验证码（发码时清零计数）。
         if (smsRateLimiter.isVerifyBlocked(SmsScene.LOGIN, phoneHash)) {
             throw new AuthException(429, "SMS_VERIFY_TOO_MANY", "验证码错误次数过多，请重新获取验证码");
@@ -134,6 +144,12 @@ public class LoginService {
 
         AuthUser user = userRepository.findByPhoneHash(phoneHash)
                 .orElseGet(() -> userRepository.createMobileUser(phoneHash));
+
+        // 注销冷静期账号拦截（优先于普通状态检查）
+        if ("PENDING_DELETION".equalsIgnoreCase(user.status())) {
+            throw new AuthException(423, "ACCOUNT_PENDING_DELETION", "您的账号正在注销中，如需撤销请在登录页点击「撤销注销」");
+        }
+
         if (!"ACTIVE".equalsIgnoreCase(user.status())) {
             throw new AuthException(404, "USER_NOT_FOUND", "账号不存在或已停用");
         }
@@ -141,7 +157,9 @@ public class LoginService {
         enforceRagForgeAccess(targetAud, user);
         auditLogService.info("login.mobile.success", user.id(), client.clientId(),
                 java.util.Map.of("target_aud", targetAud, "phone", phone, "remember", remember));
-        return tokenIssuer.issueUserTokens(user, client, targetAud, remember);
+        TokenPair tokens = tokenIssuer.issueUserTokens(user, client, targetAud, remember);
+        boolean termsUpdateRequired = !CURRENT_TERMS_VERSION.equals(user.termsVersion());
+        return new LoginResult(tokens, termsUpdateRequired);
     }
 
     /**
@@ -211,4 +229,6 @@ public class LoginService {
     private String lockKey(String account) {
         return "authgw:login:password:lock:" + account;
     }
+
+    public record LoginResult(TokenPair tokens, boolean termsUpdateRequired) {}
 }

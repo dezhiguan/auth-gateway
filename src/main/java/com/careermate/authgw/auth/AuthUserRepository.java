@@ -18,7 +18,7 @@ public class AuthUserRepository {
 
     public Optional<AuthUser> findByAccount(String account) {
         List<AuthUser> users = jdbcTemplate.query("""
-                        SELECT id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status
+                        SELECT id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status, terms_version
                         FROM auth_users
                         WHERE username = ?
                         LIMIT 1
@@ -30,7 +30,7 @@ public class AuthUserRepository {
 
     public Optional<AuthUser> findByPhoneHash(String phoneHash) {
         List<AuthUser> users = jdbcTemplate.query("""
-                        SELECT id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status
+                        SELECT id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status, terms_version
                         FROM auth_users
                         WHERE phone_hash = ?
                         LIMIT 1
@@ -44,7 +44,7 @@ public class AuthUserRepository {
         return jdbcTemplate.queryForObject("""
                         INSERT INTO auth_users(phone_hash, platform_role, session_version, status, created_at)
                         VALUES (?, 'USER', 0, 'ACTIVE', now())
-                        RETURNING id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status
+                        RETURNING id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status, terms_version
                         """,
                 (rs, rowNum) -> mapUser(rs),
                 phoneHash);
@@ -52,7 +52,7 @@ public class AuthUserRepository {
 
     public Optional<AuthUser> findByEmailHash(String emailHash) {
         List<AuthUser> users = jdbcTemplate.query("""
-                        SELECT id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status
+                        SELECT id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status, terms_version
                         FROM auth_users
                         WHERE email_hash = ?
                         LIMIT 1
@@ -67,7 +67,7 @@ public class AuthUserRepository {
         return jdbcTemplate.queryForObject("""
                         INSERT INTO auth_users(phone_hash, email_hash, username, password_hash, platform_role, session_version, status, created_at)
                         VALUES (?, ?, ?, ?, 'USER', 0, 'ACTIVE', now())
-                        RETURNING id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status
+                        RETURNING id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status, terms_version
                         """,
                 (rs, rowNum) -> mapUser(rs),
                 phoneHash, emailHash, username, passwordHash);
@@ -95,7 +95,7 @@ public class AuthUserRepository {
 
     public Optional<AuthUser> findById(long id) {
         List<AuthUser> users = jdbcTemplate.query("""
-                        SELECT id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status
+                        SELECT id, phone_hash, email_hash, username, password_hash, platform_role, session_version, status, terms_version
                         FROM auth_users
                         WHERE id = ?
                         LIMIT 1
@@ -114,6 +114,50 @@ public class AuthUserRepository {
                 passwordHash, id);
     }
 
+    /** 记录协议同意：更新已接受协议版本和时间戳。 */
+    public void updateTermsAcceptance(long userId, String termsVersion) {
+        jdbcTemplate.update("""
+                        UPDATE auth_users
+                        SET terms_version = ?, terms_accepted_at = now()
+                        WHERE id = ?
+                        """,
+                termsVersion, userId);
+    }
+
+    /** 申请注销：进入 30 天冷静期，账号变为 PENDING_DELETION 状态。 */
+    public void markPendingDeletion(long userId) {
+        jdbcTemplate.update("""
+                        UPDATE auth_users
+                        SET status = 'PENDING_DELETION',
+                            pending_deletion_at = now(),
+                            deletion_scheduled_at = now() + interval '30 days'
+                        WHERE id = ?
+                        """,
+                userId);
+    }
+
+    /** 撤销注销：恢复 ACTIVE 状态，清空注销时间戳。 */
+    public void cancelDeletion(long userId) {
+        jdbcTemplate.update("""
+                        UPDATE auth_users
+                        SET status = 'ACTIVE',
+                            pending_deletion_at = NULL,
+                            deletion_scheduled_at = NULL
+                        WHERE id = ?
+                        """,
+                userId);
+    }
+
+    /** 递增 session_version，使该用户所有现存 access token 在下次使用时失效（最多 15 分钟生效）。 */
+    public void incrementSessionVersion(long userId) {
+        jdbcTemplate.update("""
+                        UPDATE auth_users
+                        SET session_version = session_version + 1
+                        WHERE id = ?
+                        """,
+                userId);
+    }
+
     private AuthUser mapUser(ResultSet rs) throws SQLException {
         return new AuthUser(
                 rs.getLong("id"),
@@ -123,6 +167,7 @@ public class AuthUserRepository {
                 rs.getString("password_hash"),
                 rs.getString("platform_role"),
                 rs.getLong("session_version"),
-                rs.getString("status"));
+                rs.getString("status"),
+                rs.getString("terms_version"));
     }
 }

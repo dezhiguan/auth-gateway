@@ -52,10 +52,12 @@ public class AuthLoginController {
             @RequestParam(name = "client_assertion_type", required = false) String clientAssertionType,
             @RequestParam(name = "client_assertion", required = false) String clientAssertion) {
         OAuthClient client = clientAuthenticator.authenticate(clientId, clientAssertionType, clientAssertion);
-        TokenPair tokens =
+        LoginService.LoginResult result =
                 loginService.loginPassword(account, password, captcha, challengeId, targetAud, client, remember);
+        TokenPair tokens = result.tokens();
         return new LoginResponse(
-                tokens.accessToken(), tokens.refreshToken(), tokens.tokenType(), tokens.expiresIn(), tokens.refreshExpiresIn());
+                tokens.accessToken(), tokens.refreshToken(), tokens.tokenType(), tokens.expiresIn(),
+                tokens.refreshExpiresIn(), result.termsUpdateRequired());
     }
 
     @PostMapping(value = "/auth/login/mobile", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
@@ -68,9 +70,11 @@ public class AuthLoginController {
             @RequestParam(name = "client_assertion_type", required = false) String clientAssertionType,
             @RequestParam(name = "client_assertion", required = false) String clientAssertion) {
         OAuthClient client = clientAuthenticator.authenticate(clientId, clientAssertionType, clientAssertion);
-        TokenPair tokens = loginService.loginMobile(phone, code, targetAud, client, remember);
+        LoginService.LoginResult result = loginService.loginMobile(phone, code, targetAud, client, remember);
+        TokenPair tokens = result.tokens();
         return new LoginResponse(
-                tokens.accessToken(), tokens.refreshToken(), tokens.tokenType(), tokens.expiresIn(), tokens.refreshExpiresIn());
+                tokens.accessToken(), tokens.refreshToken(), tokens.tokenType(), tokens.expiresIn(),
+                tokens.refreshExpiresIn(), result.termsUpdateRequired());
     }
 
     @ExceptionHandler(AuthException.class)
@@ -79,12 +83,15 @@ public class AuthLoginController {
             Map<String, Object> body = new HashMap<>();
             body.put("error", ex.code());
             body.put("message", ex.getMessage());
-            body.put("captcha_required", true);
-            if (ex.captchaImage() != null) {
-                body.put("captchaImage", ex.captchaImage());
-            }
-            if (ex.challengeId() != null) {
-                body.put("challengeId", ex.challengeId());
+            // ACCOUNT_PENDING_DELETION 不附带验证码字段
+            if (!"ACCOUNT_PENDING_DELETION".equals(ex.code())) {
+                body.put("captcha_required", true);
+                if (ex.captchaImage() != null) {
+                    body.put("captchaImage", ex.captchaImage());
+                }
+                if (ex.challengeId() != null) {
+                    body.put("challengeId", ex.challengeId());
+                }
             }
             return ResponseEntity.status(ex.status()).body(body);
         }
@@ -98,12 +105,13 @@ public class AuthLoginController {
                 .body(Map.of("error", ex.code(), "message", ex.getMessage()));
     }
 
-    @JsonPropertyOrder({"access_token", "refresh_token", "token_type", "expires_in", "refresh_expires_in"})
+    @JsonPropertyOrder({"access_token", "refresh_token", "token_type", "expires_in", "refresh_expires_in", "terms_update_required"})
     public record LoginResponse(
             @JsonProperty("access_token") String accessToken,
             @JsonProperty("refresh_token") String refreshToken,
             @JsonProperty("token_type") String tokenType,
             @JsonProperty("expires_in") long expiresIn,
-            @JsonProperty("refresh_expires_in") long refreshExpiresIn) {
+            @JsonProperty("refresh_expires_in") long refreshExpiresIn,
+            @JsonProperty("terms_update_required") boolean termsUpdateRequired) {
     }
 }
