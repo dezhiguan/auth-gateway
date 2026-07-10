@@ -35,7 +35,7 @@ class TokenServiceTest {
     @Test
     @SuppressWarnings("unchecked")
     void refreshDetectsReplayWhenTokenWasRotatedBeyondGrace() throws Exception {
-        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 4, "ACTIVE");
+        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 4, "ACTIVE", null);
         when(tokenHasher.sha256Hex("refresh-token")).thenReturn("hash");
         when(jdbcTemplate.query(anyString(), any(ResultSetExtractor.class), any())).thenAnswer(invocation -> {
             ResultSetExtractor<?> extractor = invocation.getArgument(1);
@@ -54,7 +54,7 @@ class TokenServiceTest {
     @Test
     @SuppressWarnings("unchecked")
     void refreshReissuesTokensWhenReusedWithinRotationGrace() throws Exception {
-        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 4, "ACTIVE");
+        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 4, "ACTIVE", null);
         TokenPair pair = new TokenPair("access", "refresh2", "Bearer", 900, 604800);
         when(tokenHasher.sha256Hex("refresh-token")).thenReturn("hash");
         when(jdbcTemplate.query(anyString(), any(ResultSetExtractor.class), any())).thenAnswer(invocation -> {
@@ -74,7 +74,7 @@ class TokenServiceTest {
     @Test
     @SuppressWarnings("unchecked")
     void refreshRotatesTokenWhenSessionAndUserAreActive() throws Exception {
-        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 4, "ACTIVE");
+        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 4, "ACTIVE", null);
         TokenPair pair = new TokenPair("access", "refresh2", "Bearer", 900, 604800);
         when(tokenHasher.sha256Hex("refresh-token")).thenReturn("hash");
         when(jdbcTemplate.query(anyString(), any(ResultSetExtractor.class), any())).thenAnswer(invocation -> {
@@ -124,7 +124,7 @@ class TokenServiceTest {
     @Test
     @SuppressWarnings("unchecked")
     void refreshRejectsRevokedSession() throws Exception {
-        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 4, "ACTIVE");
+        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 4, "ACTIVE", null);
         when(tokenHasher.sha256Hex("refresh-token")).thenReturn("hash");
         when(jdbcTemplate.query(anyString(), any(ResultSetExtractor.class), any())).thenAnswer(invocation -> {
             ResultSetExtractor<?> extractor = invocation.getArgument(1);
@@ -141,7 +141,7 @@ class TokenServiceTest {
     @Test
     @SuppressWarnings("unchecked")
     void refreshRejectsSessionVersionMismatch() throws Exception {
-        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 9, "ACTIVE");
+        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 9, "ACTIVE", null);
         when(tokenHasher.sha256Hex("refresh-token")).thenReturn("hash");
         when(jdbcTemplate.query(anyString(), any(ResultSetExtractor.class), any())).thenAnswer(invocation -> {
             ResultSetExtractor<?> extractor = invocation.getArgument(1);
@@ -178,7 +178,7 @@ class TokenServiceTest {
 
     @Test
     void logoutAllRejectsBadPassword() {
-        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd-hash", "USER", 4, "ACTIVE");
+        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd-hash", "USER", 4, "ACTIVE", null);
         JWTClaimsSet claims = new JWTClaimsSet.Builder().claim("user_id", 12L).build();
         when(userRepository.findById(12)).thenReturn(Optional.of(user));
         when(passwordHasher.matches("wrong", "pwd-hash")).thenReturn(false);
@@ -189,7 +189,7 @@ class TokenServiceTest {
 
     @Test
     void logoutAllIncrementsSessionVersionAndRevokesTokens() {
-        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd-hash", "USER", 4, "ACTIVE");
+        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd-hash", "USER", 4, "ACTIVE", null);
         JWTClaimsSet claims = new JWTClaimsSet.Builder().claim("user_id", 12L).build();
         when(userRepository.findById(12)).thenReturn(Optional.of(user));
         when(passwordHasher.matches("secret", "pwd-hash")).thenReturn(true);

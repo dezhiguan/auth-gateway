@@ -54,9 +54,9 @@ class AuthCoreServicesTest {
         when(membershipRepository.find(7, "ragforge")).thenReturn(Optional.of(new AppMembership(7, "ragforge", "USER", "ACTIVE")));
         when(tokenIssuer.issueUserTokens(user, client, "ragforge-admin-api", false)).thenReturn(pair);
 
-        TokenPair result = loginService().loginPassword("alice", "secret", "ragforge-admin-api", client);
+        LoginService.LoginResult result = loginService().loginPassword("alice", "secret", "ragforge-admin-api", client);
 
-        assertThat(result).isSameAs(pair);
+        assertThat(result.tokens()).isSameAs(pair);
         verify(codeStore).delete("authgw:login:password:fail:alice");
         verify(auditLogService).info("login.password.success", 7L, "ragforge-admin-backend", Map.of("target_aud", "ragforge-admin-api", "remember", false));
     }
@@ -156,10 +156,10 @@ class AuthCoreServicesTest {
                 .thenReturn(Optional.of(new AppMembership(7, "ragforge", "USER", "ACTIVE")));
         when(tokenIssuer.issueUserTokens(user, client, "ragforge-admin-api", false)).thenReturn(pair);
 
-        TokenPair result =
+        LoginService.LoginResult result =
                 loginService().loginPassword("alice", "secret", "GOOD", "cid", "ragforge-admin-api", client, false);
 
-        assertThat(result).isSameAs(pair);
+        assertThat(result.tokens()).isSameAs(pair);
         verify(codeStore).delete("authgw:login:password:fail:alice");
         verify(codeStore).delete("authgw:login:password:lock:alice");
     }
@@ -223,7 +223,7 @@ class AuthCoreServicesTest {
         when(userRepository.createMobileUser(phoneHash)).thenReturn(user);
         when(tokenIssuer.issueUserTokens(user, client, "careermate-api", false)).thenReturn(pair);
 
-        assertThat(loginService().loginMobile("13800000000", "123456", "careermate-api", client)).isSameAs(pair);
+        assertThat(loginService().loginMobile("13800000000", "123456", "careermate-api", client).tokens()).isSameAs(pair);
         verify(smsRateLimiter).clearPendingCode(SmsScene.LOGIN, phoneHash);
     }
 
@@ -266,7 +266,7 @@ class AuthCoreServicesTest {
         when(userRepository.createFullUser(anyString(), anyString(), anyString(), anyString())).thenReturn(created);
 
         RegistrationService.RegisterResult result = registrationService()
-                .register("13800000000", "123456", " amy ", "amy@example.com", "Passw0rd", "ragforge");
+                .register("13800000000", "123456", " amy ", "amy@example.com", "Passw0rd", "ragforge", null);
 
         assertThat(result.userId()).isEqualTo(11);
         assertThat(result.linked()).isFalse();
@@ -279,7 +279,7 @@ class AuthCoreServicesTest {
         when(smsRateLimiter.getPendingProviderOutId(SmsScene.REGISTER, phoneHash)).thenReturn(Optional.empty());
         when(smsProvider.checkVerifyCode(any())).thenReturn(new MobileSmsAuthProvider.VerifyResult(true, "+8613800000000", "req-1", "OK", "ok", "PASS"));
 
-        assertThatThrownBy(() -> registrationService().register("13800000000", "123456", "amy", null, "password", "ragforge"))
+        assertThatThrownBy(() -> registrationService().register("13800000000", "123456", "amy", null, "password", "ragforge", null))
                 .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("PASSWORD_WEAK"));
     }
 
@@ -287,14 +287,14 @@ class AuthCoreServicesTest {
     void registerEnrichesExistingPhoneWithoutOverwritingExistingFields() {
         String phone = "+8613800000000";
         String phoneHash = PhoneSupport.hashPhone(phone, smsProperties.getPhoneHashPepper());
-        AuthUser existing = new AuthUser(15, phoneHash, "existing-email", "existing_user", null, "USER", 1, "ACTIVE");
+        AuthUser existing = new AuthUser(15, phoneHash, "existing-email", "existing_user", null, "USER", 1, "ACTIVE", null);
         when(smsRateLimiter.getPendingProviderOutId(SmsScene.REGISTER, phoneHash)).thenReturn(Optional.empty());
         when(smsProvider.checkVerifyCode(any())).thenReturn(new MobileSmsAuthProvider.VerifyResult(true, phone, "req-1", "OK", "ok", "PASS"));
         when(passwordHasher.hash("Passw0rd")).thenReturn("pwd-hash");
         when(userRepository.findByPhoneHash(phoneHash)).thenReturn(Optional.of(existing));
 
         RegistrationService.RegisterResult result = registrationService()
-                .register("13800000000", "123456", "new_user", "new@example.com", "Passw0rd", "careermate");
+                .register("13800000000", "123456", "new_user", "new@example.com", "Passw0rd", "careermate", null);
 
         assertThat(result.userId()).isEqualTo(15);
         assertThat(result.linked()).isTrue();
@@ -347,7 +347,7 @@ class AuthCoreServicesTest {
     }
 
     private static AuthUser user(long id, String phoneHash, String username, String passwordHash, String role, long sessionVersion, String status) {
-        return new AuthUser(id, phoneHash, null, username, passwordHash, role, sessionVersion, status);
+        return new AuthUser(id, phoneHash, null, username, passwordHash, role, sessionVersion, status, null);
     }
 
     private static OAuthClient client() {

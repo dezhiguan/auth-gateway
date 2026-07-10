@@ -135,7 +135,7 @@ class PasswordResetServiceTest {
         String emailHash = EmailSupport.hashEmail(email, smsProperties.getPhoneHashPepper());
         String phoneHash = PhoneSupport.hashPhone("+8613800000000", smsProperties.getPhoneHashPepper());
         when(userRepository.findByEmailHash(emailHash))
-                .thenReturn(Optional.of(new AuthUser(7, phoneHash, emailHash, "amy", "pwd", "USER", 2, "ACTIVE")));
+                .thenReturn(Optional.of(new AuthUser(7, phoneHash, emailHash, "amy", "pwd", "USER", 2, "ACTIVE", null)));
         when(smsProvider.sendVerifyCode(any())).thenReturn(new MobileSmsAuthProvider.SendResult(true, "out-1", "req-1", "OK", "ok"));
 
         PasswordResetService.ResetInitResult result = service().init(email, "13800000000", "1.2.3.4");
@@ -151,7 +151,7 @@ class PasswordResetServiceTest {
         String email = "user@example.com";
         String emailHash = EmailSupport.hashEmail(email, smsProperties.getPhoneHashPepper());
         String phoneHash = PhoneSupport.hashPhone("+8613800000000", smsProperties.getPhoneHashPepper());
-        AuthUser user = new AuthUser(7, phoneHash, emailHash, "amy", "pwd", "USER", 2, "ACTIVE");
+        AuthUser user = new AuthUser(7, phoneHash, emailHash, "amy", "pwd", "USER", 2, "ACTIVE", null);
         when(userRepository.findByEmailHash(emailHash)).thenReturn(Optional.of(user));
         when(codeStore.getValue("authgw:password-reset:confirm:lock:7")).thenReturn(Optional.empty());
         when(smsRateLimiter.getPendingProviderOutId(SmsScene.RESET, phoneHash)).thenReturn(Optional.of("out-1"));
@@ -281,7 +281,7 @@ class PasswordResetServiceTest {
     }
 
     private static AuthUser user(String phoneHash) {
-        return new AuthUser(7, phoneHash, null, "amy", "pwd", "USER", 2, "ACTIVE");
+        return new AuthUser(7, phoneHash, null, "amy", "pwd", "USER", 2, "ACTIVE", null);
     }
 
     private static OAuthClient client() {

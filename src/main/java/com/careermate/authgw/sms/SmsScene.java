@@ -6,7 +6,8 @@ public enum SmsScene {
     LOGIN("login"),
     REGISTER("register"),
     RESET("reset"),
-    BIND_PHONE("bind_phone");
+    BIND_PHONE("bind_phone"),
+    VERIFICATION("verification");
 
     private final String value;
 

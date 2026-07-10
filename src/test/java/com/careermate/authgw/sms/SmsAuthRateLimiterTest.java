@@ -118,6 +118,51 @@ class SmsAuthRateLimiterTest {
         verify(store).delete("authgw:sms:pending:provider-out-id:reset:phone");
     }
 
+    // ---- 验证码暴力破解锁：同号错够次数即拦截，防 6 位码穷举 ----
+
+    @Test
+    void recordVerifyFailureIncrementsFailCounterWithCodeTtl() {
+        limiter().recordVerifyFailure(SmsScene.LOGIN, "phone");
+
+        verify(store).increment("authgw:sms:verify:fail:login:phone", Duration.ofMinutes(5));
+    }
+
+    @Test
+    void isVerifyBlockedFalseWhenUnderLimit() {
+        when(store.getCounter("authgw:sms:verify:fail:login:phone")).thenReturn(4L);
+
+        assertThat(limiter().isVerifyBlocked(SmsScene.LOGIN, "phone")).isFalse();
+    }
+
+    @Test
+    void isVerifyBlockedTrueWhenAtLimit() {
+        when(store.getCounter("authgw:sms:verify:fail:login:phone")).thenReturn(5L);
+
+        assertThat(limiter().isVerifyBlocked(SmsScene.LOGIN, "phone")).isTrue();
+    }
+
+    @Test
+    void isVerifyBlockedTrueWhenOverLimit() {
+        when(store.getCounter("authgw:sms:verify:fail:login:phone")).thenReturn(9L);
+
+        assertThat(limiter().isVerifyBlocked(SmsScene.LOGIN, "phone")).isTrue();
+    }
+
+    @Test
+    void clearVerifyFailuresDeletesFailCounter() {
+        limiter().clearVerifyFailures(SmsScene.LOGIN, "phone");
+
+        verify(store).delete("authgw:sms:verify:fail:login:phone");
+    }
+
+    @Test
+    void storePendingCodeResetsVerifyFailCounterForNewCode() {
+        limiter().storePendingCode(SmsScene.LOGIN, "phone", "codeHash", "outId");
+
+        // 重新下发验证码时清零上一码的错误计数，避免旧计数误伤新码
+        verify(store).delete("authgw:sms:verify:fail:login:phone");
+    }
+
     private SmsAuthRateLimiter limiter() {
         return new SmsAuthRateLimiter(store, new SmsProperties());
     }

@@ -8,5 +8,6 @@ public record AuthUser(
         String passwordHash,
         String platformRole,
         long sessionVersion,
-        String status) {
+        String status,
+        String termsVersion) {
 }
