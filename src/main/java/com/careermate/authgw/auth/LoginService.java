@@ -14,7 +14,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class LoginService {
 
-    static final String CURRENT_TERMS_VERSION = "1.0";
+    static final String CURRENT_TERMS_VERSION = TermsPolicy.CURRENT_VERSION;
 
     private static final Duration FAIL_WINDOW = Duration.ofMinutes(30);
     private static final Duration LOCK_WINDOW = Duration.ofMinutes(15);

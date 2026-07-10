@@ -60,6 +60,22 @@ class TermsControllerTest {
     }
 
     @Test
+    void acceptTermsRejectsUnknownVersion() throws Exception {
+        JWTClaimsSet claims = new JWTClaimsSet.Builder().subject("user:9").claim("user_id", 9L).build();
+        when(accessTokenVerifier.verify("Bearer tok9")).thenReturn(claims);
+
+        mockMvc.perform(post("/auth/users/me/terms-acceptance")
+                        .header("Authorization", "Bearer tok9")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"termsVersion\":\"999\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("TERMS_VERSION_INVALID"));
+
+        org.mockito.Mockito.verify(userRepository, org.mockito.Mockito.never())
+                .updateTermsAcceptance(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
     void acceptTermsReturns401WhenTokenInvalid() throws Exception {
         when(accessTokenVerifier.verify("Bearer bad"))
                 .thenThrow(new AuthException(401, "ACCESS_TOKEN_INVALID", "invalid"));

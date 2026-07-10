@@ -7,6 +7,7 @@ import com.careermate.authgw.audit.AuditLogService;
 import com.careermate.authgw.sms.MobileSmsAuthProvider;
 import com.careermate.authgw.sms.PhoneSupport;
 import com.careermate.authgw.sms.SmsAuthRateLimiter;
+import com.careermate.authgw.sms.SmsException;
 import com.careermate.authgw.sms.SmsProperties;
 import com.careermate.authgw.sms.SmsScene;
 import com.nimbusds.jwt.JWTClaimsSet;
@@ -61,10 +62,10 @@ public class AccountDeletionController {
             @RequestBody DeletionRequest request) {
         long userId = currentUserId(authorization);
         verifySmsForUser(userId, request.phone(), request.smsCode());
-        userRepository.markPendingDeletion(userId);
+        // 幂等：已在冷静期时保留首次的计划清理时间，重复申请不重置 30 天倒计时。
+        java.time.Instant scheduledAt = userRepository.markPendingDeletion(userId);
         auditLogService.high("account.deletion.requested", userId, null, Map.of());
-        String scheduledAt = java.time.Instant.now().plus(java.time.Duration.ofDays(30)).toString();
-        return Map.of("deletionScheduledAt", scheduledAt);
+        return Map.of("deletionScheduledAt", scheduledAt.toString());
     }
 
     /**
@@ -99,6 +100,9 @@ public class AccountDeletionController {
     }
 
     private void verifySmsForPhone(String normalizedPhone, String phoneHash, String smsCode) {
+        if (smsCode == null || smsCode.isBlank()) {
+            throw new AuthException(400, "SMS_CODE_REQUIRED", "请输入验证码");
+        }
         if (smsRateLimiter.isVerifyBlocked(SmsScene.VERIFICATION, phoneHash)) {
             throw new AuthException(429, "SMS_VERIFY_TOO_MANY", "验证码错误次数过多，请重新获取");
         }
@@ -122,6 +126,13 @@ public class AccountDeletionController {
 
     @ExceptionHandler(AuthException.class)
     public ResponseEntity<Map<String, Object>> handleAuthException(AuthException ex) {
+        return ResponseEntity.status(ex.status())
+                .body(Map.of("error", ex.code(), "message", ex.getMessage()));
+    }
+
+    /** 手机号格式非法（含缺失/空/畸形）由此返回友好 400，而非落到框架 500。 */
+    @ExceptionHandler(SmsException.class)
+    public ResponseEntity<Map<String, Object>> handleSmsException(SmsException ex) {
         return ResponseEntity.status(ex.status())
                 .body(Map.of("error", ex.code(), "message", ex.getMessage()));
     }

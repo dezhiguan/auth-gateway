@@ -3,6 +3,7 @@ package com.careermate.authgw.web;
 import com.careermate.authgw.auth.AccessTokenVerifier;
 import com.careermate.authgw.auth.AuthException;
 import com.careermate.authgw.auth.AuthUserRepository;
+import com.careermate.authgw.auth.TermsPolicy;
 import com.careermate.authgw.audit.AuditLogService;
 import com.nimbusds.jwt.JWTClaimsSet;
 import java.util.Map;
@@ -39,8 +40,12 @@ public class TermsController {
         Object userId = claims.getClaim("user_id");
         if (userId == null) throw new AuthException(401, "USER_ID_MISSING", "token 中缺少 user_id");
         long uid = ((Number) userId).longValue();
+        // 缺省按当前版本；显式传入的版本必须与当前生效版本一致，杜绝写入不存在的版本号污染合规记录。
         String version = (request.termsVersion() != null && !request.termsVersion().isBlank())
-                ? request.termsVersion() : "1.0";
+                ? request.termsVersion() : TermsPolicy.CURRENT_VERSION;
+        if (!TermsPolicy.isCurrent(version)) {
+            throw new AuthException(400, "TERMS_VERSION_INVALID", "协议版本无效，请刷新页面后重试");
+        }
         userRepository.updateTermsAcceptance(uid, version);
         auditLogService.info("terms.accepted", uid, null, Map.of("version", version));
         return Map.of("accepted", true, "termsVersion", version);

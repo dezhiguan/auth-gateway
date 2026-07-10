@@ -124,15 +124,20 @@ public class AuthUserRepository {
                 termsVersion, userId);
     }
 
-    /** 申请注销：进入 30 天冷静期，账号变为 PENDING_DELETION 状态。 */
-    public void markPendingDeletion(long userId) {
-        jdbcTemplate.update("""
+    /**
+     * 申请注销：进入 30 天冷静期，账号变为 PENDING_DELETION 状态。
+     * 幂等：COALESCE 保留已存在的注销时间戳，重复申请不重置倒计时；返回实际生效的计划清理时间。
+     */
+    public java.time.Instant markPendingDeletion(long userId) {
+        return jdbcTemplate.queryForObject("""
                         UPDATE auth_users
                         SET status = 'PENDING_DELETION',
-                            pending_deletion_at = now(),
-                            deletion_scheduled_at = now() + interval '30 days'
+                            pending_deletion_at = COALESCE(pending_deletion_at, now()),
+                            deletion_scheduled_at = COALESCE(deletion_scheduled_at, now() + interval '30 days')
                         WHERE id = ?
+                        RETURNING deletion_scheduled_at
                         """,
+                (rs, rowNum) -> rs.getTimestamp("deletion_scheduled_at").toInstant(),
                 userId);
     }
 

@@ -60,6 +60,7 @@ class AccountDeletionControllerTest {
         when(smsRateLimiter.isVerifyBlocked(SmsScene.VERIFICATION, phoneHash)).thenReturn(false);
         when(smsRateLimiter.getPendingProviderOutId(SmsScene.VERIFICATION, phoneHash)).thenReturn(Optional.empty());
         when(smsProvider.checkVerifyCode(any())).thenReturn(new MobileSmsAuthProvider.VerifyResult(true, null, null, null, null, null));
+        when(userRepository.markPendingDeletion(5L)).thenReturn(java.time.Instant.parse("2026-08-10T00:00:00Z"));
 
         mockMvc.perform(post("/auth/users/me/deletion-request")
                         .header("Authorization", "Bearer tok")
@@ -164,5 +165,37 @@ class AccountDeletionControllerTest {
                                 """.formatted(PHONE, SMS_CODE)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("USER_NOT_FOUND"));
+    }
+
+    @Test
+    void requestDeletionWithMalformedPhoneReturnsFriendly400() throws Exception {
+        JWTClaimsSet claims = new JWTClaimsSet.Builder().subject("user:5").claim("user_id", 5L).build();
+        when(accessTokenVerifier.verify("Bearer tok")).thenReturn(claims);
+        AuthUser user = new AuthUser(5L, "hash", null, "alice", null, "USER", 1L, "ACTIVE", null);
+        when(userRepository.findById(5L)).thenReturn(Optional.of(user));
+
+        // 畸形手机号：requireMainlandPhone 抛 SmsException，应被友好 400 捕获而非落到 500。
+        mockMvc.perform(post("/auth/users/me/deletion-request")
+                        .header("Authorization", "Bearer tok")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"phone\":\"abc\",\"smsCode\":\"654321\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("PHONE_FORMAT_INVALID"));
+    }
+
+    @Test
+    void requestDeletionWithBlankSmsCodeReturns400() throws Exception {
+        JWTClaimsSet claims = new JWTClaimsSet.Builder().subject("user:5").claim("user_id", 5L).build();
+        when(accessTokenVerifier.verify("Bearer tok")).thenReturn(claims);
+        String phoneHash = com.careermate.authgw.sms.PhoneSupport.hashPhone(PHONE, PEPPER);
+        AuthUser user = new AuthUser(5L, phoneHash, null, "alice", null, "USER", 1L, "ACTIVE", null);
+        when(userRepository.findById(5L)).thenReturn(Optional.of(user));
+
+        mockMvc.perform(post("/auth/users/me/deletion-request")
+                        .header("Authorization", "Bearer tok")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"phone\":\"%s\",\"smsCode\":\"\"}".formatted(PHONE)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("SMS_CODE_REQUIRED"));
     }
 }
