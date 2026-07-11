@@ -16,6 +16,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -69,21 +70,39 @@ public class AccountDeletionController {
     }
 
     /**
-     * 撤销注销（冷静期内）。账号为 PENDING_DELETION 无法登录，通过 phone+SMS 识别并验证用户身份。
-     * 请求体：{ phone, smsCode }。
+     * 查询当前账号的注销状态。仅校验 Bearer 签名，不要求 ACTIVE，
+     * 使 PENDING_DELETION 用户仍能读到自己的注销状态以在设置页展示"撤销注销"入口。
      */
-    @DeleteMapping(value = "/auth/users/me/deletion-request", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public Map<String, Object> cancelDeletion(@RequestBody DeletionRequest request) {
-        String normalizedPhone = PhoneSupport.requireMainlandPhone(request.phone());
-        String phoneHash = PhoneSupport.hashPhone(normalizedPhone, smsProperties.getPhoneHashPepper());
-        var user = userRepository.findByPhoneHash(phoneHash)
+    @GetMapping("/auth/users/me/deletion-status")
+    public Map<String, Object> deletionStatus(
+            @RequestHeader(name = "Authorization", required = false) String authorization) {
+        long userId = currentUserId(authorization);
+        var user = userRepository.findById(userId)
+                .orElseThrow(() -> new AuthException(404, "USER_NOT_FOUND", "账号不存在"));
+        boolean pending = "PENDING_DELETION".equalsIgnoreCase(user.status());
+        java.time.Instant scheduledAt = pending ? userRepository.getDeletionScheduledAt(userId) : null;
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("status", user.status());
+        body.put("pendingDeletion", pending);
+        body.put("deletionScheduledAt", scheduledAt != null ? scheduledAt.toString() : null);
+        return body;
+    }
+
+    /**
+     * 撤销注销（冷静期内）。仅凭 Bearer token 识别用户即可撤销，无需短信二次验证——
+     * 申请注销后不吊销当前会话，用户在设置页仍处登录态，可一键撤销（与 CareerMate 撤销体验一致）。
+     */
+    @DeleteMapping("/auth/users/me/deletion-request")
+    public Map<String, Object> cancelDeletion(
+            @RequestHeader(name = "Authorization", required = false) String authorization) {
+        long userId = currentUserId(authorization);
+        var user = userRepository.findById(userId)
                 .orElseThrow(() -> new AuthException(404, "USER_NOT_FOUND", "账号不存在"));
         if (!"PENDING_DELETION".equalsIgnoreCase(user.status())) {
             throw new AuthException(400, "NOT_PENDING_DELETION", "账号当前未处于注销冷静期");
         }
-        verifySmsForPhone(normalizedPhone, phoneHash, request.smsCode());
-        userRepository.cancelDeletion(user.id());
-        auditLogService.info("account.deletion.cancelled", user.id(), null, Map.of());
+        userRepository.cancelDeletion(userId);
+        auditLogService.info("account.deletion.cancelled", userId, null, Map.of());
         return Map.of("status", "ACTIVE");
     }
 

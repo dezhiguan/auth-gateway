@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -118,20 +119,14 @@ class AccountDeletionControllerTest {
     }
 
     @Test
-    void cancelDeletionRestoresActiveStatusViaPhoneAndSms() throws Exception {
-        String phoneHash = com.careermate.authgw.sms.PhoneSupport.hashPhone(PHONE, PEPPER);
-        AuthUser user = new AuthUser(6L, phoneHash, null, "bob", null, "USER", 1L, "PENDING_DELETION", null);
-        when(userRepository.findByPhoneHash(phoneHash)).thenReturn(Optional.of(user));
+    void cancelDeletionRestoresActiveStatusViaBearerOnly() throws Exception {
+        JWTClaimsSet claims = new JWTClaimsSet.Builder().subject("user:6").claim("user_id", 6L).build();
+        when(accessTokenVerifier.verify("Bearer tok")).thenReturn(claims);
+        AuthUser user = new AuthUser(6L, "hash", null, "bob", null, "USER", 1L, "PENDING_DELETION", null);
+        when(userRepository.findById(6L)).thenReturn(Optional.of(user));
 
-        when(smsRateLimiter.isVerifyBlocked(SmsScene.VERIFICATION, phoneHash)).thenReturn(false);
-        when(smsRateLimiter.getPendingProviderOutId(SmsScene.VERIFICATION, phoneHash)).thenReturn(Optional.empty());
-        when(smsProvider.checkVerifyCode(any())).thenReturn(new MobileSmsAuthProvider.VerifyResult(true, null, null, null, null, null));
-
-        mockMvc.perform(delete("/auth/users/me/deletion-request")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"phone":"%s","smsCode":"%s"}
-                                """.formatted(PHONE, SMS_CODE)))
+        // 撤销仅需 Bearer，无需短信、无请求体
+        mockMvc.perform(delete("/auth/users/me/deletion-request").header("Authorization", "Bearer tok"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ACTIVE"));
 
@@ -140,31 +135,39 @@ class AccountDeletionControllerTest {
 
     @Test
     void cancelDeletionReturns400WhenAccountNotPendingDeletion() throws Exception {
-        String phoneHash = com.careermate.authgw.sms.PhoneSupport.hashPhone(PHONE, PEPPER);
-        AuthUser user = new AuthUser(6L, phoneHash, null, "bob", null, "USER", 1L, "ACTIVE", null);
-        when(userRepository.findByPhoneHash(phoneHash)).thenReturn(Optional.of(user));
+        JWTClaimsSet claims = new JWTClaimsSet.Builder().subject("user:6").claim("user_id", 6L).build();
+        when(accessTokenVerifier.verify("Bearer tok")).thenReturn(claims);
+        AuthUser user = new AuthUser(6L, "hash", null, "bob", null, "USER", 1L, "ACTIVE", null);
+        when(userRepository.findById(6L)).thenReturn(Optional.of(user));
 
-        mockMvc.perform(delete("/auth/users/me/deletion-request")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"phone":"%s","smsCode":"%s"}
-                                """.formatted(PHONE, SMS_CODE)))
+        mockMvc.perform(delete("/auth/users/me/deletion-request").header("Authorization", "Bearer tok"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("NOT_PENDING_DELETION"));
     }
 
     @Test
     void cancelDeletionReturns404WhenUserNotFound() throws Exception {
-        String phoneHash = com.careermate.authgw.sms.PhoneSupport.hashPhone(PHONE, PEPPER);
-        when(userRepository.findByPhoneHash(phoneHash)).thenReturn(Optional.empty());
+        JWTClaimsSet claims = new JWTClaimsSet.Builder().subject("user:6").claim("user_id", 6L).build();
+        when(accessTokenVerifier.verify("Bearer tok")).thenReturn(claims);
+        when(userRepository.findById(6L)).thenReturn(Optional.empty());
 
-        mockMvc.perform(delete("/auth/users/me/deletion-request")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"phone":"%s","smsCode":"%s"}
-                                """.formatted(PHONE, SMS_CODE)))
+        mockMvc.perform(delete("/auth/users/me/deletion-request").header("Authorization", "Bearer tok"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("USER_NOT_FOUND"));
+    }
+
+    @Test
+    void deletionStatusReturnsPendingInfo() throws Exception {
+        JWTClaimsSet claims = new JWTClaimsSet.Builder().subject("user:6").claim("user_id", 6L).build();
+        when(accessTokenVerifier.verify("Bearer tok")).thenReturn(claims);
+        AuthUser user = new AuthUser(6L, "hash", null, "bob", null, "USER", 1L, "PENDING_DELETION", null);
+        when(userRepository.findById(6L)).thenReturn(Optional.of(user));
+        when(userRepository.getDeletionScheduledAt(6L)).thenReturn(java.time.Instant.parse("2026-08-10T00:00:00Z"));
+
+        mockMvc.perform(get("/auth/users/me/deletion-status").header("Authorization", "Bearer tok"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pendingDeletion").value(true))
+                .andExpect(jsonPath("$.deletionScheduledAt").value("2026-08-10T00:00:00Z"));
     }
 
     @Test
