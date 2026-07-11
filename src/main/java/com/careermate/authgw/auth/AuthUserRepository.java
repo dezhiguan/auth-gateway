@@ -141,6 +141,17 @@ public class AuthUserRepository {
                 userId);
     }
 
+    /** 读取计划清理时间（供设置页展示"X 天后删除"）。 */
+    public java.time.Instant getDeletionScheduledAt(long userId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT deletion_scheduled_at FROM auth_users WHERE id = ?",
+                (rs, rowNum) -> {
+                    java.sql.Timestamp ts = rs.getTimestamp("deletion_scheduled_at");
+                    return ts == null ? null : ts.toInstant();
+                },
+                userId);
+    }
+
     /** 撤销注销：恢复 ACTIVE 状态，清空注销时间戳。 */
     public void cancelDeletion(long userId) {
         jdbcTemplate.update("""
