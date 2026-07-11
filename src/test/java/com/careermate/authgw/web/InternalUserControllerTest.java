@@ -7,7 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.careermate.authgw.auth.AuthException;
-import com.careermate.authgw.auth.AuthUserRepository;
+import com.careermate.authgw.auth.TokenService;
 import com.careermate.authgw.oauth.ClientAuthenticator;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,7 +21,7 @@ class InternalUserControllerTest {
 
     @Autowired MockMvc mockMvc;
     @MockitoBean ClientAuthenticator clientAuthenticator;
-    @MockitoBean AuthUserRepository userRepository;
+    @MockitoBean TokenService tokenService;
 
     @Test
     void invalidateSessionIncrementsVersionAndReturnsTrue() throws Exception {
@@ -36,7 +36,7 @@ class InternalUserControllerTest {
 
         verify(clientAuthenticator).authenticate("ragforge",
                 "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", "signed.jwt.token");
-        verify(userRepository).incrementSessionVersion(42L);
+        verify(tokenService).revokeUserSessions(42L, "org-member-removed");
     }
 
     @Test

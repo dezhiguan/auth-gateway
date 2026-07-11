@@ -157,6 +157,16 @@ public class TokenService {
         if (!passwordHasher.matches(password, user.passwordHash())) {
             throw new AuthException(401, "BAD_CREDENTIALS", "bad credentials");
         }
+        revokeUserSessions(userId, "logout-all");
+    }
+
+    /**
+     * 撤销某用户的全部会话：递增 session_version、吊销全部 auth_sessions 与 refresh_tokens，
+     * 并发布 session.revoked 事件通知下游应用（rag-forge 据此在 Redis 标记该用户令牌撤销点，拦截旧 access token）。
+     * 供全端退出、以及被移出组织后失效会话等场景复用。
+     */
+    @Transactional
+    public void revokeUserSessions(long userId, String reason) {
         jdbcTemplate.update("UPDATE auth_users SET session_version = session_version + 1 WHERE id = ?", userId);
         jdbcTemplate.update("""
                         UPDATE auth_sessions
@@ -170,7 +180,7 @@ public class TokenService {
                         WHERE session_id IN (SELECT session_id FROM auth_sessions WHERE user_id = ?)
                         """,
                 userId);
-        eventPublisher.publish("session.revoked", Map.of("user_id", userId, "reason", "logout-all"));
+        eventPublisher.publish("session.revoked", Map.of("user_id", userId, "reason", reason));
     }
 
     private static final String REFRESH_SELECT = """

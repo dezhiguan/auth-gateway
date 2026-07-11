@@ -1,7 +1,7 @@
 package com.careermate.authgw.web;
 
 import com.careermate.authgw.auth.AuthException;
-import com.careermate.authgw.auth.AuthUserRepository;
+import com.careermate.authgw.auth.TokenService;
 import com.careermate.authgw.oauth.ClientAuthenticator;
 import java.util.Map;
 import org.springframework.http.MediaType;
@@ -17,16 +17,17 @@ import org.springframework.web.bind.annotation.RestController;
 public class InternalUserController {
 
     private final ClientAuthenticator clientAuthenticator;
-    private final AuthUserRepository userRepository;
+    private final TokenService tokenService;
 
-    public InternalUserController(ClientAuthenticator clientAuthenticator, AuthUserRepository userRepository) {
+    public InternalUserController(ClientAuthenticator clientAuthenticator, TokenService tokenService) {
         this.clientAuthenticator = clientAuthenticator;
-        this.userRepository = userRepository;
+        this.tokenService = tokenService;
     }
 
     /**
-     * 递增用户 session_version，使该用户所有现存 access token 在下次使用时失效（最多 15 分钟）。
-     * 场景：rag-forge 将成员移出组织后调用，确保被移出者 access token 因 session_version 不匹配而返回 403。
+     * 失效用户的全部会话：递增 session_version、吊销 refresh_tokens，并发布 session.revoked 事件。
+     * 场景：rag-forge 将成员移出组织后调用，被移出者旧 access token 经事件被下游标记撤销、refresh token 失效，
+     * 从而在下次访问/续期时被踢下线（复用与全端退出/改密一致的会话撤销链，不再依赖跨库查 session_version）。
      */
     @PostMapping(value = "/internal/users/{userId}/invalidate-session", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
     public Map<String, Object> invalidateSession(
@@ -35,7 +36,7 @@ public class InternalUserController {
             @RequestParam(name = "client_assertion_type", required = false) String clientAssertionType,
             @RequestParam(name = "client_assertion", required = false) String clientAssertion) {
         clientAuthenticator.authenticate(clientId, clientAssertionType, clientAssertion);
-        userRepository.incrementSessionVersion(userId);
+        tokenService.revokeUserSessions(userId, "org-member-removed");
         return Map.of("invalidated", true, "userId", userId);
     }
 
