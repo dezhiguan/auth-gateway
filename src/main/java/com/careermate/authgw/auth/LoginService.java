@@ -187,11 +187,16 @@ public class LoginService {
         if (!"careermate-api".equals(targetAud)) {
             return;
         }
-        membershipRepository.find(user.id(), "careermate").ifPresent(m -> {
-            if ("DELETED".equalsIgnoreCase(m.status())) {
+        var existing = membershipRepository.find(user.id(), "careermate");
+        if (existing.isPresent()) {
+            if ("DELETED".equalsIgnoreCase(existing.get().status())) {
                 throw new AuthException(403, "CAREERMATE_ACCESS_REVOKED", "该账号已注销，如需使用请重新注册");
             }
-        });
+            return;
+        }
+        // 短信自动注册等路径可能未建 membership：登录 CareerMate 时补建（幂等，自愈存量用户），
+        // 使这些用户也能正常注销（应用级注销依赖 membership）。
+        membershipRepository.ensureMembership(user.id(), "careermate", "USER");
     }
 
     private java.util.Optional<AuthUser> findPasswordLoginUser(String account) {

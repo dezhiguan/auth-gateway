@@ -42,9 +42,10 @@ class LoginServiceCareermateAccessTest {
     }
 
     @Test
-    void noMembership_passes() {
+    void noMembership_ensuresMembershipAndPasses() {
         when(membershipRepository.find(1L, "careermate")).thenReturn(Optional.empty());
         assertDoesNotThrow(() -> loginService.enforceCareermateAccess("careermate-api", user(1L)));
+        org.mockito.Mockito.verify(membershipRepository).ensureMembership(1L, "careermate", "USER");
     }
 
     @Test
