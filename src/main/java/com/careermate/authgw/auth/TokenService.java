@@ -183,6 +183,29 @@ public class TokenService {
         eventPublisher.publish("session.revoked", Map.of("user_id", userId, "reason", reason));
     }
 
+    /**
+     * 仅撤销某用户在指定受众（App）下的会话与 refresh token —— 应用级注销时强制登出该 App，
+     * 不动其它受众的会话（如 careermate 会话不受 ragforge 注销影响）；不递增账号级 session_version。
+     * 发 session.revoked 事件，rag-forge 据此拦截其 ragforge access token（按 user 撤销点，不误伤 careermate）。
+     */
+    @Transactional
+    public void revokeUserSessionsForAudience(long userId, String targetAudience, String reason) {
+        jdbcTemplate.update("""
+                        UPDATE auth_sessions
+                        SET revoked_at = COALESCE(revoked_at, now())
+                        WHERE user_id = ? AND target_audience = ? AND revoked_at IS NULL
+                        """,
+                userId, targetAudience);
+        jdbcTemplate.update("""
+                        UPDATE refresh_tokens
+                        SET revoked_at = COALESCE(revoked_at, now())
+                        WHERE session_id IN (
+                            SELECT session_id FROM auth_sessions WHERE user_id = ? AND target_audience = ?)
+                        """,
+                userId, targetAudience);
+        eventPublisher.publish("session.revoked", Map.of("user_id", userId, "reason", reason));
+    }
+
     private static final String REFRESH_SELECT = """
             SELECT rt.token_hash, rt.family_id, rt.session_id, rt.expires_at,
                    rt.rotated_at, rt.revoked_at, rt.replaced_by_hash,

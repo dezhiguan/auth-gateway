@@ -22,7 +22,8 @@ public class EventPublisher {
             "user.password.changed",
             "consent.revoked",
             "refresh.replay_detected",
-            "user.deleted");
+            "user.deleted",
+            "user.app_removed");
 
     private final JdbcTemplate jdbcTemplate;
     private final EventOutboxRepository eventOutboxRepository;

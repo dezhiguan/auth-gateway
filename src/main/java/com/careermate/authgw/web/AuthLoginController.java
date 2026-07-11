@@ -57,7 +57,7 @@ public class AuthLoginController {
         TokenPair tokens = result.tokens();
         return new LoginResponse(
                 tokens.accessToken(), tokens.refreshToken(), tokens.tokenType(), tokens.expiresIn(),
-                tokens.refreshExpiresIn(), result.termsUpdateRequired());
+                tokens.refreshExpiresIn(), result.termsUpdateRequired(), result.pendingDeletion());
     }
 
     @PostMapping(value = "/auth/login/mobile", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
@@ -74,7 +74,7 @@ public class AuthLoginController {
         TokenPair tokens = result.tokens();
         return new LoginResponse(
                 tokens.accessToken(), tokens.refreshToken(), tokens.tokenType(), tokens.expiresIn(),
-                tokens.refreshExpiresIn(), result.termsUpdateRequired());
+                tokens.refreshExpiresIn(), result.termsUpdateRequired(), result.pendingDeletion());
     }
 
     @ExceptionHandler(AuthException.class)
@@ -105,13 +105,14 @@ public class AuthLoginController {
                 .body(Map.of("error", ex.code(), "message", ex.getMessage()));
     }
 
-    @JsonPropertyOrder({"access_token", "refresh_token", "token_type", "expires_in", "refresh_expires_in", "terms_update_required"})
+    @JsonPropertyOrder({"access_token", "refresh_token", "token_type", "expires_in", "refresh_expires_in", "terms_update_required", "pending_deletion"})
     public record LoginResponse(
             @JsonProperty("access_token") String accessToken,
             @JsonProperty("refresh_token") String refreshToken,
             @JsonProperty("token_type") String tokenType,
             @JsonProperty("expires_in") long expiresIn,
             @JsonProperty("refresh_expires_in") long refreshExpiresIn,
-            @JsonProperty("terms_update_required") boolean termsUpdateRequired) {
+            @JsonProperty("terms_update_required") boolean termsUpdateRequired,
+            @JsonProperty("pending_deletion") boolean pendingDeletion) {
     }
 }

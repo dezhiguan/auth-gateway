@@ -10,9 +10,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.careermate.authgw.auth.AccessTokenVerifier;
+import com.careermate.authgw.auth.AppMembership;
 import com.careermate.authgw.auth.AuthException;
 import com.careermate.authgw.auth.AuthUser;
 import com.careermate.authgw.auth.AuthUserRepository;
+import com.careermate.authgw.auth.MembershipRepository;
+import com.careermate.authgw.auth.TokenService;
 import com.careermate.authgw.audit.AuditLogService;
 import com.careermate.authgw.sms.MobileSmsAuthProvider;
 import com.careermate.authgw.sms.SmsAuthRateLimiter;
@@ -38,6 +41,8 @@ class AccountDeletionControllerTest {
     @Autowired MockMvc mockMvc;
     @MockitoBean AccessTokenVerifier accessTokenVerifier;
     @MockitoBean AuthUserRepository userRepository;
+    @MockitoBean MembershipRepository membershipRepository;
+    @MockitoBean TokenService tokenService;
     @MockitoBean MobileSmsAuthProvider smsProvider;
     @MockitoBean SmsAuthRateLimiter smsRateLimiter;
     @MockitoBean SmsProperties smsProperties;
@@ -49,38 +54,53 @@ class AccountDeletionControllerTest {
     }
 
     @Test
-    void requestDeletionMarksPendingAndReturnsDeletionScheduledAt() throws Exception {
+    void requestDeletionMarksRagforgeMembershipPendingAndRevokesSessions() throws Exception {
         JWTClaimsSet claims = new JWTClaimsSet.Builder().subject("user:5").claim("user_id", 5L).build();
         when(accessTokenVerifier.verify("Bearer tok")).thenReturn(claims);
 
-        // findById returns user whose phoneHash matches PHONE hashed with PEPPER
         String phoneHash = com.careermate.authgw.sms.PhoneSupport.hashPhone(PHONE, PEPPER);
         AuthUser user = new AuthUser(5L, phoneHash, null, "alice", null, "USER", 1L, "ACTIVE", null);
         when(userRepository.findById(5L)).thenReturn(Optional.of(user));
-
         when(smsRateLimiter.isVerifyBlocked(SmsScene.VERIFICATION, phoneHash)).thenReturn(false);
         when(smsRateLimiter.getPendingProviderOutId(SmsScene.VERIFICATION, phoneHash)).thenReturn(Optional.empty());
         when(smsProvider.checkVerifyCode(any())).thenReturn(new MobileSmsAuthProvider.VerifyResult(true, null, null, null, null, null));
-        when(userRepository.markPendingDeletion(5L)).thenReturn(java.time.Instant.parse("2026-08-10T00:00:00Z"));
+        when(membershipRepository.markPendingDeletion(5L, "ragforge")).thenReturn(java.time.Instant.parse("2026-08-10T00:00:00Z"));
 
         mockMvc.perform(post("/auth/users/me/deletion-request")
                         .header("Authorization", "Bearer tok")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"phone":"%s","smsCode":"%s"}
-                                """.formatted(PHONE, SMS_CODE)))
+                        .content("{\"phone\":\"%s\",\"smsCode\":\"%s\"}".formatted(PHONE, SMS_CODE)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.deletionScheduledAt").isString());
 
-        verify(userRepository).markPendingDeletion(5L);
+        verify(membershipRepository).markPendingDeletion(5L, "ragforge");
+        verify(tokenService).revokeUserSessionsForAudience(5L, "ragforge-admin-api", "ragforge-account-deletion");
+    }
+
+    @Test
+    void requestDeletionReturns404WhenNoRagforgeMembership() throws Exception {
+        JWTClaimsSet claims = new JWTClaimsSet.Builder().subject("user:5").claim("user_id", 5L).build();
+        when(accessTokenVerifier.verify("Bearer tok")).thenReturn(claims);
+        String phoneHash = com.careermate.authgw.sms.PhoneSupport.hashPhone(PHONE, PEPPER);
+        AuthUser user = new AuthUser(5L, phoneHash, null, "alice", null, "USER", 1L, "ACTIVE", null);
+        when(userRepository.findById(5L)).thenReturn(Optional.of(user));
+        when(smsRateLimiter.isVerifyBlocked(SmsScene.VERIFICATION, phoneHash)).thenReturn(false);
+        when(smsRateLimiter.getPendingProviderOutId(SmsScene.VERIFICATION, phoneHash)).thenReturn(Optional.empty());
+        when(smsProvider.checkVerifyCode(any())).thenReturn(new MobileSmsAuthProvider.VerifyResult(true, null, null, null, null, null));
+        when(membershipRepository.markPendingDeletion(5L, "ragforge")).thenReturn(null);
+
+        mockMvc.perform(post("/auth/users/me/deletion-request")
+                        .header("Authorization", "Bearer tok")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"phone\":\"%s\",\"smsCode\":\"%s\"}".formatted(PHONE, SMS_CODE)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("APP_MEMBERSHIP_NOT_FOUND"));
     }
 
     @Test
     void requestDeletionReturns400WhenPhoneMismatch() throws Exception {
         JWTClaimsSet claims = new JWTClaimsSet.Builder().subject("user:5").claim("user_id", 5L).build();
         when(accessTokenVerifier.verify("Bearer tok")).thenReturn(claims);
-
-        // Stored phoneHash corresponds to a different phone
         String otherHash = com.careermate.authgw.sms.PhoneSupport.hashPhone("13900000002", PEPPER);
         AuthUser user = new AuthUser(5L, otherHash, null, "alice", null, "USER", 1L, "ACTIVE", null);
         when(userRepository.findById(5L)).thenReturn(Optional.of(user));
@@ -88,9 +108,7 @@ class AccountDeletionControllerTest {
         mockMvc.perform(post("/auth/users/me/deletion-request")
                         .header("Authorization", "Bearer tok")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"phone":"%s","smsCode":"%s"}
-                                """.formatted(PHONE, SMS_CODE)))
+                        .content("{\"phone\":\"%s\",\"smsCode\":\"%s\"}".formatted(PHONE, SMS_CODE)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("PHONE_MISMATCH"));
     }
@@ -99,11 +117,9 @@ class AccountDeletionControllerTest {
     void requestDeletionReturns401WhenSmsCodeInvalid() throws Exception {
         JWTClaimsSet claims = new JWTClaimsSet.Builder().subject("user:5").claim("user_id", 5L).build();
         when(accessTokenVerifier.verify("Bearer tok")).thenReturn(claims);
-
         String phoneHash = com.careermate.authgw.sms.PhoneSupport.hashPhone(PHONE, PEPPER);
         AuthUser user = new AuthUser(5L, phoneHash, null, "alice", null, "USER", 1L, "ACTIVE", null);
         when(userRepository.findById(5L)).thenReturn(Optional.of(user));
-
         when(smsRateLimiter.isVerifyBlocked(SmsScene.VERIFICATION, phoneHash)).thenReturn(false);
         when(smsRateLimiter.getPendingProviderOutId(SmsScene.VERIFICATION, phoneHash)).thenReturn(Optional.empty());
         when(smsProvider.checkVerifyCode(any())).thenReturn(new MobileSmsAuthProvider.VerifyResult(false, null, null, null, null, null));
@@ -111,34 +127,29 @@ class AccountDeletionControllerTest {
         mockMvc.perform(post("/auth/users/me/deletion-request")
                         .header("Authorization", "Bearer tok")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"phone":"%s","smsCode":"000000"}
-                                """.formatted(PHONE)))
+                        .content("{\"phone\":\"%s\",\"smsCode\":\"000000\"}".formatted(PHONE)))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error").value("SMS_CODE_INVALID"));
     }
 
     @Test
-    void cancelDeletionRestoresActiveStatusViaBearerOnly() throws Exception {
+    void cancelDeletionRestoresActiveViaBearerOnly() throws Exception {
         JWTClaimsSet claims = new JWTClaimsSet.Builder().subject("user:6").claim("user_id", 6L).build();
         when(accessTokenVerifier.verify("Bearer tok")).thenReturn(claims);
-        AuthUser user = new AuthUser(6L, "hash", null, "bob", null, "USER", 1L, "PENDING_DELETION", null);
-        when(userRepository.findById(6L)).thenReturn(Optional.of(user));
+        when(membershipRepository.cancelDeletion(6L, "ragforge")).thenReturn(1);
 
-        // 撤销仅需 Bearer，无需短信、无请求体
         mockMvc.perform(delete("/auth/users/me/deletion-request").header("Authorization", "Bearer tok"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ACTIVE"));
 
-        verify(userRepository).cancelDeletion(6L);
+        verify(membershipRepository).cancelDeletion(6L, "ragforge");
     }
 
     @Test
-    void cancelDeletionReturns400WhenAccountNotPendingDeletion() throws Exception {
+    void cancelDeletionReturns400WhenNotPending() throws Exception {
         JWTClaimsSet claims = new JWTClaimsSet.Builder().subject("user:6").claim("user_id", 6L).build();
         when(accessTokenVerifier.verify("Bearer tok")).thenReturn(claims);
-        AuthUser user = new AuthUser(6L, "hash", null, "bob", null, "USER", 1L, "ACTIVE", null);
-        when(userRepository.findById(6L)).thenReturn(Optional.of(user));
+        when(membershipRepository.cancelDeletion(6L, "ragforge")).thenReturn(0);
 
         mockMvc.perform(delete("/auth/users/me/deletion-request").header("Authorization", "Bearer tok"))
                 .andExpect(status().isBadRequest())
@@ -146,23 +157,13 @@ class AccountDeletionControllerTest {
     }
 
     @Test
-    void cancelDeletionReturns404WhenUserNotFound() throws Exception {
-        JWTClaimsSet claims = new JWTClaimsSet.Builder().subject("user:6").claim("user_id", 6L).build();
-        when(accessTokenVerifier.verify("Bearer tok")).thenReturn(claims);
-        when(userRepository.findById(6L)).thenReturn(Optional.empty());
-
-        mockMvc.perform(delete("/auth/users/me/deletion-request").header("Authorization", "Bearer tok"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.error").value("USER_NOT_FOUND"));
-    }
-
-    @Test
     void deletionStatusReturnsPendingInfo() throws Exception {
         JWTClaimsSet claims = new JWTClaimsSet.Builder().subject("user:6").claim("user_id", 6L).build();
         when(accessTokenVerifier.verify("Bearer tok")).thenReturn(claims);
-        AuthUser user = new AuthUser(6L, "hash", null, "bob", null, "USER", 1L, "PENDING_DELETION", null);
-        when(userRepository.findById(6L)).thenReturn(Optional.of(user));
-        when(userRepository.getDeletionScheduledAt(6L)).thenReturn(java.time.Instant.parse("2026-08-10T00:00:00Z"));
+        when(membershipRepository.find(6L, "ragforge"))
+                .thenReturn(Optional.of(new AppMembership(6L, "ragforge", "USER", "PENDING_DELETION")));
+        when(membershipRepository.getDeletionScheduledAt(6L, "ragforge"))
+                .thenReturn(java.time.Instant.parse("2026-08-10T00:00:00Z"));
 
         mockMvc.perform(get("/auth/users/me/deletion-status").header("Authorization", "Bearer tok"))
                 .andExpect(status().isOk())
@@ -177,7 +178,6 @@ class AccountDeletionControllerTest {
         AuthUser user = new AuthUser(5L, "hash", null, "alice", null, "USER", 1L, "ACTIVE", null);
         when(userRepository.findById(5L)).thenReturn(Optional.of(user));
 
-        // 畸形手机号：requireMainlandPhone 抛 SmsException，应被友好 400 捕获而非落到 500。
         mockMvc.perform(post("/auth/users/me/deletion-request")
                         .header("Authorization", "Bearer tok")
                         .contentType(MediaType.APPLICATION_JSON)

@@ -1,8 +1,11 @@
 package com.careermate.authgw.web;
 
 import com.careermate.authgw.auth.AccessTokenVerifier;
+import com.careermate.authgw.auth.AppMembership;
 import com.careermate.authgw.auth.AuthException;
 import com.careermate.authgw.auth.AuthUserRepository;
+import com.careermate.authgw.auth.MembershipRepository;
+import com.careermate.authgw.auth.TokenService;
 import com.careermate.authgw.audit.AuditLogService;
 import com.careermate.authgw.sms.MobileSmsAuthProvider;
 import com.careermate.authgw.sms.PhoneSupport;
@@ -23,16 +26,22 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 账号注销：申请进入 30 天冷静期 / 冷静期内撤销。
+ * RAGForge 应用级注销：短信二次验证 + 仅退 ragforge membership（不动共享身份、不影响 CareerMate）。
+ * 申请进入 30 天冷静期 / 冷静期内可一键撤销。
  *
- * <p>POST（申请注销）：需 Bearer token 识别用户 + phone+smsCode 二次验证。
- * DELETE（撤销注销）：账号已 PENDING_DELETION 无法登录，仅凭 phone+smsCode 识别用户。
+ * <p>POST（申请注销）：Bearer 识别用户 + phone+smsCode 二次验证 → 标记 ragforge membership 待删 + 吊销 ragforge 会话。
+ * DELETE（撤销注销）：仅凭 Bearer 一键撤销该 membership。
  */
 @RestController
 public class AccountDeletionController {
 
+    private static final String RAGFORGE_APP = "ragforge";
+    private static final String RAGFORGE_AUDIENCE = "ragforge-admin-api";
+
     private final AccessTokenVerifier accessTokenVerifier;
     private final AuthUserRepository userRepository;
+    private final MembershipRepository membershipRepository;
+    private final TokenService tokenService;
     private final MobileSmsAuthProvider smsProvider;
     private final SmsAuthRateLimiter smsRateLimiter;
     private final SmsProperties smsProperties;
@@ -41,12 +50,16 @@ public class AccountDeletionController {
     public AccountDeletionController(
             AccessTokenVerifier accessTokenVerifier,
             AuthUserRepository userRepository,
+            MembershipRepository membershipRepository,
+            TokenService tokenService,
             MobileSmsAuthProvider smsProvider,
             SmsAuthRateLimiter smsRateLimiter,
             SmsProperties smsProperties,
             AuditLogService auditLogService) {
         this.accessTokenVerifier = accessTokenVerifier;
         this.userRepository = userRepository;
+        this.membershipRepository = membershipRepository;
+        this.tokenService = tokenService;
         this.smsProvider = smsProvider;
         this.smsRateLimiter = smsRateLimiter;
         this.smsProperties = smsProperties;
@@ -63,9 +76,14 @@ public class AccountDeletionController {
             @RequestBody DeletionRequest request) {
         long userId = currentUserId(authorization);
         verifySmsForUser(userId, request.phone(), request.smsCode());
-        // 幂等：已在冷静期时保留首次的计划清理时间，重复申请不重置 30 天倒计时。
-        java.time.Instant scheduledAt = userRepository.markPendingDeletion(userId);
-        auditLogService.high("account.deletion.requested", userId, null, Map.of());
+        // 应用级：仅标记 ragforge membership 待删（幂等，不重置倒计时）；不动共享身份与 careermate。
+        java.time.Instant scheduledAt = membershipRepository.markPendingDeletion(userId, RAGFORGE_APP);
+        if (scheduledAt == null) {
+            throw new AuthException(404, "APP_MEMBERSHIP_NOT_FOUND", "当前账号未开通 RAGForge，无需注销");
+        }
+        // 吊销该用户 ragforge 会话，强制登出（careermate 会话不受影响）。
+        tokenService.revokeUserSessionsForAudience(userId, RAGFORGE_AUDIENCE, "ragforge-account-deletion");
+        auditLogService.high("app.deletion.requested", userId, null, Map.of("app", RAGFORGE_APP));
         return Map.of("deletionScheduledAt", scheduledAt.toString());
     }
 
@@ -77,12 +95,11 @@ public class AccountDeletionController {
     public Map<String, Object> deletionStatus(
             @RequestHeader(name = "Authorization", required = false) String authorization) {
         long userId = currentUserId(authorization);
-        var user = userRepository.findById(userId)
-                .orElseThrow(() -> new AuthException(404, "USER_NOT_FOUND", "账号不存在"));
-        boolean pending = "PENDING_DELETION".equalsIgnoreCase(user.status());
-        java.time.Instant scheduledAt = pending ? userRepository.getDeletionScheduledAt(userId) : null;
+        AppMembership m = membershipRepository.find(userId, RAGFORGE_APP).orElse(null);
+        boolean pending = m != null && "PENDING_DELETION".equalsIgnoreCase(m.status());
+        java.time.Instant scheduledAt = pending ? membershipRepository.getDeletionScheduledAt(userId, RAGFORGE_APP) : null;
         Map<String, Object> body = new java.util.LinkedHashMap<>();
-        body.put("status", user.status());
+        body.put("status", m == null ? "NONE" : m.status());
         body.put("pendingDeletion", pending);
         body.put("deletionScheduledAt", scheduledAt != null ? scheduledAt.toString() : null);
         return body;
@@ -96,13 +113,11 @@ public class AccountDeletionController {
     public Map<String, Object> cancelDeletion(
             @RequestHeader(name = "Authorization", required = false) String authorization) {
         long userId = currentUserId(authorization);
-        var user = userRepository.findById(userId)
-                .orElseThrow(() -> new AuthException(404, "USER_NOT_FOUND", "账号不存在"));
-        if (!"PENDING_DELETION".equalsIgnoreCase(user.status())) {
+        int updated = membershipRepository.cancelDeletion(userId, RAGFORGE_APP);
+        if (updated != 1) {
             throw new AuthException(400, "NOT_PENDING_DELETION", "账号当前未处于注销冷静期");
         }
-        userRepository.cancelDeletion(userId);
-        auditLogService.info("account.deletion.cancelled", userId, null, Map.of());
+        auditLogService.info("app.deletion.cancelled", userId, null, Map.of("app", RAGFORGE_APP));
         return Map.of("status", "ACTIVE");
     }
 

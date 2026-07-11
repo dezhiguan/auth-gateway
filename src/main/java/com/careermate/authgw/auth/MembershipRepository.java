@@ -69,6 +69,18 @@ public class MembershipRepository {
         return rows.stream().findFirst().orElse(null);
     }
 
+    /** 读取该 (user, app) 的计划清理时间（供设置页/中间页展示"X 天后删除"）。 */
+    public java.time.Instant getDeletionScheduledAt(long userId, String app) {
+        List<java.time.Instant> rows = jdbcTemplate.query(
+                "SELECT deletion_scheduled_at FROM user_app_membership WHERE user_id = ? AND app = ?",
+                (rs, n) -> {
+                    java.sql.Timestamp ts = rs.getTimestamp("deletion_scheduled_at");
+                    return ts == null ? null : ts.toInstant();
+                },
+                userId, app);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
     /** 撤销应用级注销：membership 恢复 ACTIVE，清空计划清理时间。返回命中行数。 */
     public int cancelDeletion(long userId, String app) {
         return jdbcTemplate.update("""
