@@ -114,7 +114,8 @@ public class LoginService {
                 java.util.Map.of("target_aud", targetAud, "remember", remember));
         TokenPair tokens = tokenIssuer.issueUserTokens(user, client, targetAud, remember);
         boolean termsUpdateRequired = !CURRENT_TERMS_VERSION.equals(user.termsVersion());
-        return new LoginResult(tokens, termsUpdateRequired);
+        boolean pendingDeletion = isRagforgePendingDeletion(targetAud, user);
+        return new LoginResult(tokens, termsUpdateRequired, pendingDeletion);
     }
 
     public LoginResult loginMobile(String phone, String code, String targetAud, OAuthClient client) {
@@ -163,7 +164,8 @@ public class LoginService {
                 java.util.Map.of("target_aud", targetAud, "phone", phone, "remember", remember));
         TokenPair tokens = tokenIssuer.issueUserTokens(user, client, targetAud, remember);
         boolean termsUpdateRequired = !CURRENT_TERMS_VERSION.equals(user.termsVersion());
-        return new LoginResult(tokens, termsUpdateRequired);
+        boolean pendingDeletion = isRagforgePendingDeletion(targetAud, user);
+        return new LoginResult(tokens, termsUpdateRequired, pendingDeletion);
     }
 
     /**
@@ -174,9 +176,22 @@ public class LoginService {
         if (!"ragforge-admin-api".equals(targetAud)) {
             return;
         }
-        if (membershipRepository.find(user.id(), "ragforge").isEmpty()) {
+        var existing = membershipRepository.find(user.id(), "ragforge");
+        if (existing.isEmpty()) {
             throw new AuthException(403, "RAGFORGE_ACCESS_DENIED", "请先在 RAGForge 注册或由管理员开通访问权限");
         }
+        if ("DELETED".equalsIgnoreCase(existing.get().status())) {
+            throw new AuthException(403, "RAGFORGE_ACCESS_REVOKED", "该账号的 RAGForge 已注销，如需使用请重新注册");
+        }
+        // PENDING_DELETION（冷静期内）放行 —— 由前端"注销中"中间页承载撤销恢复。
+    }
+
+    /** ragforge membership 是否处于注销冷静期（供登录响应下发 pending 标志，驱动前端中间页）。 */
+    public boolean isRagforgePendingDeletion(String targetAud, AuthUser user) {
+        return "ragforge-admin-api".equals(targetAud)
+                && membershipRepository.find(user.id(), "ragforge")
+                        .map(m -> "PENDING_DELETION".equalsIgnoreCase(m.status()))
+                        .orElse(false);
     }
 
     /**
@@ -254,5 +269,5 @@ public class LoginService {
         return "authgw:login:password:lock:" + account;
     }
 
-    public record LoginResult(TokenPair tokens, boolean termsUpdateRequired) {}
+    public record LoginResult(TokenPair tokens, boolean termsUpdateRequired, boolean pendingDeletion) {}
 }
