@@ -108,6 +108,8 @@ public class LoginService {
         bucketStore.delete(lockKey(account));
 
         enforceRagForgeAccess(targetAud, user);
+
+        enforceCareermateAccess(targetAud, user);
         auditLogService.info("login.password.success", user.id(), client.clientId(),
                 java.util.Map.of("target_aud", targetAud, "remember", remember));
         TokenPair tokens = tokenIssuer.issueUserTokens(user, client, targetAud, remember);
@@ -155,6 +157,8 @@ public class LoginService {
         }
 
         enforceRagForgeAccess(targetAud, user);
+
+        enforceCareermateAccess(targetAud, user);
         auditLogService.info("login.mobile.success", user.id(), client.clientId(),
                 java.util.Map.of("target_aud", targetAud, "phone", phone, "remember", remember));
         TokenPair tokens = tokenIssuer.issueUserTokens(user, client, targetAud, remember);
@@ -173,6 +177,21 @@ public class LoginService {
         if (membershipRepository.find(user.id(), "ragforge").isEmpty()) {
             throw new AuthException(403, "RAGFORGE_ACCESS_DENIED", "请先在 RAGForge 注册或由管理员开通访问权限");
         }
+    }
+
+    /**
+     * CareerMate 应用级准入：membership 已 DELETED（应用级注销到期清理完成）时拒绝登录。
+     * PENDING_DELETION（冷静期内）放行 —— 由 CareerMate 本地状态 + 前端"注销中"中间页承载撤销恢复。
+     */
+    public void enforceCareermateAccess(String targetAud, AuthUser user) {
+        if (!"careermate-api".equals(targetAud)) {
+            return;
+        }
+        membershipRepository.find(user.id(), "careermate").ifPresent(m -> {
+            if ("DELETED".equalsIgnoreCase(m.status())) {
+                throw new AuthException(403, "CAREERMATE_ACCESS_REVOKED", "该账号已注销，如需使用请重新注册");
+            }
+        });
     }
 
     private java.util.Optional<AuthUser> findPasswordLoginUser(String account) {
