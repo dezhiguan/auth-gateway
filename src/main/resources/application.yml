@@ -32,6 +32,8 @@ jwks:
     previous-private-key: ${JWKS_PREVIOUS_PRIVATE_KEY_PATH:config/keys/auth-previous.pem}
 
 auth:
+  internal:
+    provisioner-client-id: ${AUTH_INTERNAL_PROVISIONER_CLIENT_ID:}
   issuer: ${AUTH_ISSUER:https://auth.careermate.cn}
   token-endpoint-audience: ${AUTH_TOKEN_ENDPOINT_AUDIENCE:https://auth.careermate.cn/oauth/token}
   access-token-ttl-seconds: ${AUTH_ACCESS_TOKEN_TTL_SECONDS:900}

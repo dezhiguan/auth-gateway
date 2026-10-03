@@ -179,7 +179,7 @@ Flyway 默认写入两个 OAuth client：
 
 | client_id | auth_method | allowed_audiences | allowed_scopes |
 |---|---|---|---|
-| `careermate-backend` | `private_key_jwt` | `careermate-api`, `ragforge-admin-api`, `ragforge-api` | `rag:search` |
+| `careermate-backend` | `private_key_jwt` | `careermate-api`, `ragforge-admin-api`, `ragforge-api`, `keel-api` | `rag:search` |
 | `ragforge-admin-backend` | `private_key_jwt` | `ragforge-admin-api` | `rag:admin:read`, `rag:admin:write` |
 
 `dev` profile 开启 `auth.dev.allow-local-jwks-client-assertions=true`，本地脚本可用 `config/keys/auth-active.pem` 为上述 client 生成 `private_key_jwt` assertion。生产环境必须使用客户端自有的 JWKS URI。
@@ -268,6 +268,8 @@ requested_scopes=rag:search
 | Method | Path | Content-Type | 说明 |
 |---|---|---|---|
 | `POST` | `/internal/users/resolve-by-phone` | `x-www-form-urlencoded` | 按手机号精确解析用户（供下游邀请成员）。仅授权 client 可调用，仅做哈希精确匹配、返回脱敏号码，不分页、不模糊搜索 |
+| `POST` | `/internal/clients` | `json` + private_key_jwt 请求头 | Keel 内网注册或更新智能体客户端，详见 [P0-5 对接约定](docs/keel-p0-5.md) |
+| `DELETE` | `/internal/clients/{client_id}` | private_key_jwt 请求头 | Keel 内网删除托管客户端 |
 
 ### JWKS / Health / Risk
 
@@ -286,7 +288,7 @@ requested_scopes=rag:search
 - `aud`：请求的 `target_aud`
 - `sub`：`user:<user_id>`
 - `principal_type`：`user`
-- `user_id`、`platform_role`、`rag_role`
+- `user_id`、`platform_role`、`rag_role`、`roles`（多值业务角色）
 - `scopes`（按 `target_aud` 与角色派生）
 - `session_id`、`session_version`
 - `rag_readable_kb_ids`、`rag_writable_kb_ids`

@@ -33,6 +33,12 @@ class TokenIssuerTest {
         OAuthClient client = client(Set.of("ragforge-admin-api"));
         when(tokenHasher.sha256Hex(anyString())).thenReturn("refresh-hash");
         when(jwtSigner.sign(any(JWTClaimsSet.class))).thenReturn("signed-access");
+        when(jdbcTemplate.queryForList(org.mockito.ArgumentMatchers.contains("audience_scopes"),
+                org.mockito.ArgumentMatchers.eq(String.class), org.mockito.ArgumentMatchers.eq("ragforge-admin-api"),
+                org.mockito.ArgumentMatchers.eq("ADMIN"))).thenReturn(List.of("rag:admin:read", "rag:admin:write"));
+        when(jdbcTemplate.queryForList(org.mockito.ArgumentMatchers.contains("user_roles"),
+                org.mockito.ArgumentMatchers.eq(String.class), org.mockito.ArgumentMatchers.eq(12L)))
+                .thenReturn(List.of("ops_admin"));
 
         TokenPair pair = issuer().issueUserTokens(user, client, "ragforge-admin-api");
 
@@ -50,6 +56,7 @@ class TokenIssuerTest {
         verify(jwtSigner).sign(claims.capture());
         assertThat(claims.getValue().getSubject()).isEqualTo("user:12");
         assertThat(claims.getValue().getStringClaim("rag_role")).isEqualTo("ADMIN");
+        assertThat(claims.getValue().getStringListClaim("roles")).containsExactly("ops_admin");
         assertThat(claims.getValue().getStringListClaim("scopes")).containsExactly("rag:admin:read", "rag:admin:write");
     }
 
@@ -84,7 +91,45 @@ class TokenIssuerTest {
         ArgumentCaptor<JWTClaimsSet> claims = ArgumentCaptor.forClass(JWTClaimsSet.class);
         verify(jwtSigner).sign(claims.capture());
         assertThat(claims.getValue().getStringClaim("azp")).isEqualTo("ragforge-admin-backend");
+        assertThat(claims.getValue().getStringListClaim("roles")).isEmpty();
         assertThat(claims.getValue().getStringListClaim("scopes")).containsExactly("rag:admin:read");
+    }
+
+    @Test
+    void keelUserTokenHasKeelAudienceAndTableDrivenScopes() throws Exception {
+        AuthUser user = new AuthUser(12, "phone", null, "amy", "pwd", "USER", 4, "ACTIVE", null);
+        when(tokenHasher.sha256Hex(anyString())).thenReturn("refresh-hash");
+        when(jwtSigner.sign(any(JWTClaimsSet.class))).thenReturn("signed-access");
+        when(jdbcTemplate.queryForList(org.mockito.ArgumentMatchers.contains("audience_scopes"),
+                org.mockito.ArgumentMatchers.eq(String.class), org.mockito.ArgumentMatchers.eq("keel-api"),
+                org.mockito.ArgumentMatchers.eq("USER"))).thenReturn(List.of("agent:invoke", "rag:search"));
+        when(jdbcTemplate.queryForList(org.mockito.ArgumentMatchers.contains("user_roles"),
+                org.mockito.ArgumentMatchers.eq(String.class), org.mockito.ArgumentMatchers.eq(12L)))
+                .thenReturn(List.of());
+
+        issuer().issueUserTokens(user, client(Set.of("keel-api")), "keel-api");
+
+        ArgumentCaptor<JWTClaimsSet> claims = ArgumentCaptor.forClass(JWTClaimsSet.class);
+        verify(jwtSigner).sign(claims.capture());
+        assertThat(claims.getValue().getAudience()).containsExactly("keel-api");
+        assertThat(claims.getValue().getStringListClaim("roles")).isEmpty();
+        assertThat(claims.getValue().getStringListClaim("scopes")).containsExactly("agent:invoke", "rag:search");
+    }
+
+    @Test
+    void exchangedTokenRetainsBusinessRoles() throws Exception {
+        JWTClaimsSet subject = new JWTClaimsSet.Builder()
+                .subject("user:12")
+                .claim("roles", List.of("ops_engineer"))
+                .build();
+        when(jwtSigner.sign(any(JWTClaimsSet.class))).thenReturn("exchanged");
+
+        issuer().issueExchangedToken(subject, client(Set.of("ops-copilot")),
+                "ops-copilot", Set.of("agent:invoke"));
+
+        ArgumentCaptor<JWTClaimsSet> claims = ArgumentCaptor.forClass(JWTClaimsSet.class);
+        verify(jwtSigner).sign(claims.capture());
+        assertThat(claims.getValue().getStringListClaim("roles")).containsExactly("ops_engineer");
     }
 
     @Test

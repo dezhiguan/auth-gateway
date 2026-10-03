@@ -223,6 +223,10 @@ upstream auth_gateway_backend {
 server {
     server_name auth.careermate.cn;
 
+    location ^~ /internal/clients {
+        return 404;
+    }
+
     location / {
         proxy_pass http://auth_gateway_backend;
         proxy_set_header Host auth.careermate.cn;
@@ -234,6 +238,7 @@ server {
 ```
 
 Use `deploy/nginx/auth-gateway.conf.example` as the base config.
+Keep Server 3's NodePort reachable only from trusted private networks; Keel provisioning uses the private address. The Service uses `externalTrafficPolicy: Local` to preserve the source IP for the application's internal endpoint check. Set `AUTH_INTERNAL_PROVISIONER_CLIENT_ID` to the preprovisioned Keel server client ID before enabling client registration. See [Keel P0-5 integration](keel-p0-5.md).
 
 ## 11. Verification
 
