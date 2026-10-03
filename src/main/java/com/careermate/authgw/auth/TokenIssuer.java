@@ -63,6 +63,7 @@ public class TokenIssuer {
                 .claim("principal_type", "user")
                 .claim("user_id", user.id())
                 .claim("platform_role", user.platformRole())
+                .claim("roles", rolesFor(user.id()))
                 .claim("rag_role", deriveRagRole(user))
                 .claim("rag_readable_kb_ids", List.of())
                 .claim("rag_writable_kb_ids", List.of())
@@ -100,6 +101,7 @@ public class TokenIssuer {
                 .claim("principal_type", "user")
                 .claim("user_id", user.id())
                 .claim("platform_role", user.platformRole())
+                .claim("roles", rolesFor(user.id()))
                 .claim("rag_role", deriveRagRole(user))
                 .claim("rag_readable_kb_ids", List.of())
                 .claim("rag_writable_kb_ids", List.of())
@@ -126,6 +128,7 @@ public class TokenIssuer {
                 .claim("principal_type", subjectClaims.getClaim("principal_type"))
                 .claim("user_id", subjectClaims.getClaim("user_id"))
                 .claim("platform_role", subjectClaims.getClaim("platform_role"))
+                .claim("roles", rolesFrom(subjectClaims))
                 .claim("rag_role", subjectClaims.getClaim("rag_role"))
                 .claim("rag_readable_kb_ids", subjectClaims.getClaim("rag_readable_kb_ids"))
                 .claim("rag_writable_kb_ids", subjectClaims.getClaim("rag_writable_kb_ids"))
@@ -189,16 +192,25 @@ public class TokenIssuer {
     }
 
     private List<String> scopesFor(AuthUser user, String targetAud) {
-        if ("careermate-api".equals(targetAud)) {
-            return List.of("rag:search");
+        return jdbcTemplate.queryForList("""
+                        SELECT scope FROM audience_scopes
+                        WHERE audience = ? AND (required_platform_role IS NULL OR UPPER(required_platform_role) = UPPER(?))
+                        ORDER BY scope
+                        """, String.class, targetAud, user.platformRole());
+    }
+
+    private List<String> rolesFor(long userId) {
+        return jdbcTemplate.queryForList(
+                "SELECT role FROM user_roles WHERE user_id = ? ORDER BY role", String.class, userId);
+    }
+
+    private List<String> rolesFrom(JWTClaimsSet claims) {
+        try {
+            List<String> roles = claims.getStringListClaim("roles");
+            return roles == null ? List.of() : roles;
+        } catch (Exception ignored) {
+            return List.of();
         }
-        if ("ragforge-admin-api".equals(targetAud) && "ADMIN".equalsIgnoreCase(user.platformRole())) {
-            return List.of("rag:admin:read", "rag:admin:write");
-        }
-        if ("ragforge-admin-api".equals(targetAud)) {
-            return List.of("rag:admin:read");
-        }
-        return List.of();
     }
 
 }
