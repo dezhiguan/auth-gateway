@@ -17,21 +17,26 @@ import org.springframework.stereotype.Component;
 public class KeelConsoleAccountSeeder {
 
     private static final Logger log = LoggerFactory.getLogger(KeelConsoleAccountSeeder.class);
-    static final String USERNAME = "guandezhi";
 
     public KeelConsoleAccountSeeder(JdbcTemplate jdbcTemplate, PasswordHasher passwordHasher,
                                      MembershipRepository membershipRepository,
+                                     @Value("${KEEL_CONSOLE_USERNAME:}") String username,
                                      @Value("${KEEL_CONSOLE_PASSWORD:}") String password) {
+        String account = username == null ? "" : username.trim();
+        if (account.isEmpty()) {
+            log.warn("KEEL_CONSOLE_USERNAME 未配置，跳过控制台账号初始化");
+            return;
+        }
         String raw = password == null ? "" : password.trim();
         String passwordHash = raw.isEmpty() ? null : passwordHasher.hash(raw);
-        Long userId = findUserId(jdbcTemplate);
+        Long userId = findUserId(jdbcTemplate, account);
         if (userId == null) {
             jdbcTemplate.update("""
                             INSERT INTO auth_users(username, password_hash, platform_role, session_version, status, created_at)
                             VALUES (?, ?, 'ADMIN', 0, 'ACTIVE', now())
                             """,
-                    USERNAME, passwordHash);
-            userId = findUserId(jdbcTemplate);
+                    account, passwordHash);
+            userId = findUserId(jdbcTemplate, account);
             if (passwordHash == null) {
                 log.warn("KEEL_CONSOLE_PASSWORD 未配置，已创建控制台账号但还不能用密码登录");
             }
@@ -56,9 +61,9 @@ public class KeelConsoleAccountSeeder {
         }
     }
 
-    private static Long findUserId(JdbcTemplate jdbcTemplate) {
+    private static Long findUserId(JdbcTemplate jdbcTemplate, String username) {
         List<Long> ids = jdbcTemplate.queryForList(
-                "SELECT id FROM auth_users WHERE username = ? LIMIT 1", Long.class, USERNAME);
+                "SELECT id FROM auth_users WHERE username = ? LIMIT 1", Long.class, username);
         return ids.isEmpty() ? null : ids.getFirst();
     }
 }

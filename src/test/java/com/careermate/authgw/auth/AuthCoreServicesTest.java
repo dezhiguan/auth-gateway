@@ -228,13 +228,13 @@ class AuthCoreServicesTest {
 
     @Test
     void loginPasswordRejectsKeelWhenMembershipMissing() {
-        AuthUser user = user(7, "hash", "guandezhi", "pwd-hash", "ADMIN", 2, "ACTIVE");
-        when(codeStore.getValue("authgw:login:password:lock:guandezhi")).thenReturn(Optional.empty());
-        when(userRepository.findByAccount("guandezhi")).thenReturn(Optional.of(user));
+        AuthUser user = user(7, "hash", "console-user", "pwd-hash", "ADMIN", 2, "ACTIVE");
+        when(codeStore.getValue("authgw:login:password:lock:console-user")).thenReturn(Optional.empty());
+        when(userRepository.findByAccount("console-user")).thenReturn(Optional.of(user));
         when(passwordHasher.matches("secret", "pwd-hash")).thenReturn(true);
         when(membershipRepository.find(7, "keel")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> loginService().loginPassword("guandezhi", "secret", "keel-console", client()))
+        assertThatThrownBy(() -> loginService().loginPassword("console-user", "secret", "keel-console", client()))
                 .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("KEEL_ACCESS_DENIED"));
     }
 
