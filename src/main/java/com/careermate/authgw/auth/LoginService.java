@@ -8,6 +8,7 @@ import com.careermate.authgw.sms.PhoneSupport;
 import com.careermate.authgw.sms.SmsProperties;
 import com.careermate.authgw.sms.SmsScene;
 import java.time.Duration;
+import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -110,6 +111,7 @@ public class LoginService {
         enforceRagForgeAccess(targetAud, user);
 
         enforceCareermateAccess(targetAud, user);
+        enforceKeelAccess(targetAud, user);
         auditLogService.info("login.password.success", user.id(), client.clientId(),
                 java.util.Map.of("target_aud", targetAud, "remember", remember));
         TokenPair tokens = tokenIssuer.issueUserTokens(user, client, targetAud, remember);
@@ -145,8 +147,12 @@ public class LoginService {
         smsRateLimiter.clearVerifyFailures(SmsScene.LOGIN, phoneHash);
         smsRateLimiter.clearPendingCode(SmsScene.LOGIN, phoneHash);
 
-        AuthUser user = userRepository.findByPhoneHash(phoneHash)
-                .orElseGet(() -> userRepository.createMobileUser(phoneHash));
+        // keel-console 只登录不注册：没查到用户就拒绝，不能自动建号。
+        Optional<AuthUser> found = userRepository.findByPhoneHash(phoneHash);
+        if ("keel-console".equals(targetAud) && found.isEmpty()) {
+            throw new AuthException(401, "BAD_CREDENTIALS", "账号或密码不正确");
+        }
+        AuthUser user = found.orElseGet(() -> userRepository.createMobileUser(phoneHash));
 
         // 注销冷静期账号拦截（优先于普通状态检查）
         if ("PENDING_DELETION".equalsIgnoreCase(user.status())) {
@@ -160,6 +166,7 @@ public class LoginService {
         enforceRagForgeAccess(targetAud, user);
 
         enforceCareermateAccess(targetAud, user);
+        enforceKeelAccess(targetAud, user);
         auditLogService.info("login.mobile.success", user.id(), client.clientId(),
                 java.util.Map.of("target_aud", targetAud, "phone", phone, "remember", remember));
         TokenPair tokens = tokenIssuer.issueUserTokens(user, client, targetAud, remember);
@@ -192,6 +199,19 @@ public class LoginService {
                 && membershipRepository.find(user.id(), "ragforge")
                         .map(m -> "PENDING_DELETION".equalsIgnoreCase(m.status()))
                         .orElse(false);
+    }
+
+    /**
+     * Keel 控制台只给开通了 keel 应用的账号登录，避免短信登录把新手机号自动建成用户后还能进控制台。
+     */
+    public void enforceKeelAccess(String targetAud, AuthUser user) {
+        if (!"keel-console".equals(targetAud)) {
+            return;
+        }
+        var existing = membershipRepository.find(user.id(), "keel");
+        if (existing.isEmpty() || !"ACTIVE".equalsIgnoreCase(existing.get().status())) {
+            throw new AuthException(403, "KEEL_ACCESS_DENIED", "这个账号还没有开通 Keel 控制台，请联系平台管理员");
+        }
     }
 
     /**

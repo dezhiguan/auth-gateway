@@ -211,6 +211,34 @@ class AuthCoreServicesTest {
     }
 
     @Test
+    void loginMobileDoesNotCreateUserForKeelConsole() {
+        String phone = "+8613800000000";
+        String phoneHash = PhoneSupport.hashPhone(phone, smsProperties.getPhoneHashPepper());
+        when(smsRateLimiter.getPendingProviderOutId(SmsScene.LOGIN, phoneHash)).thenReturn(Optional.of("out-1"));
+        when(smsProvider.checkVerifyCode(any())).thenReturn(new MobileSmsAuthProvider.VerifyResult(true, phone, "req-1", "OK", "ok", "PASS"));
+        when(userRepository.findByPhoneHash(phoneHash)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> loginService().loginMobile("13800000000", "123456", "keel-console", client()))
+                .isInstanceOfSatisfying(AuthException.class, ex -> {
+                    assertThat(ex.status()).isEqualTo(401);
+                    assertThat(ex.code()).isEqualTo("BAD_CREDENTIALS");
+                });
+        verify(userRepository, never()).createMobileUser(anyString());
+    }
+
+    @Test
+    void loginPasswordRejectsKeelWhenMembershipMissing() {
+        AuthUser user = user(7, "hash", "guandezhi", "pwd-hash", "ADMIN", 2, "ACTIVE");
+        when(codeStore.getValue("authgw:login:password:lock:guandezhi")).thenReturn(Optional.empty());
+        when(userRepository.findByAccount("guandezhi")).thenReturn(Optional.of(user));
+        when(passwordHasher.matches("secret", "pwd-hash")).thenReturn(true);
+        when(membershipRepository.find(7, "keel")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> loginService().loginPassword("guandezhi", "secret", "keel-console", client()))
+                .isInstanceOfSatisfying(AuthException.class, ex -> assertThat(ex.code()).isEqualTo("KEEL_ACCESS_DENIED"));
+    }
+
+    @Test
     void loginMobileCreatesUserWhenPhoneDoesNotExist() {
         String phone = "+8613800000000";
         String phoneHash = PhoneSupport.hashPhone(phone, smsProperties.getPhoneHashPepper());

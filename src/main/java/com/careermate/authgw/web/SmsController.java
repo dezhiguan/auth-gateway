@@ -12,6 +12,7 @@ import com.careermate.authgw.sms.SmsException;
 import com.careermate.authgw.sms.SmsProperties;
 import com.careermate.authgw.sms.SmsScene;
 import java.util.Optional;
+import java.util.Set;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Duration;
 import java.util.Map;
@@ -25,8 +26,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class SmsController {
 
-    /** 在登录场景下要求"必须已注册"的 App（其登录非注册一体，发码前先校验准入，避免给未注册号码白发短信）。 */
-    private static final String LOGIN_REQUIRES_MEMBERSHIP_APP = "ragforge";
+    /** 登录非注册一体的 App：发码前先校验准入，避免给未开通的号码发短信。 */
+    private static final Set<String> LOGIN_REQUIRES_MEMBERSHIP = Set.of("ragforge", "keel");
 
     private final MobileSmsAuthProvider smsProvider;
     private final SmsAuthRateLimiter rateLimiter;
@@ -63,10 +64,10 @@ public class SmsController {
 
         rateLimiter.checkSendAllowed(scene, phoneHash, ipHash, PhoneSupport.maskPhone(phone));
 
-        // 登录场景下，对"登录非注册一体"的 App（如 ragforge）先校验准入：未注册则不发短信，避免浪费。
-        // 注意：CareerMate 移动端登录注册一体，不传 app（或非 ragforge），此处不拦截。
-        if (scene == SmsScene.LOGIN && LOGIN_REQUIRES_MEMBERSHIP_APP.equalsIgnoreCase(request.app())) {
-            requireRegisteredForLogin(phoneHash);
+        // CareerMate 移动端登录注册一体，不传 app 时不拦截。ragforge、keel 必须已经开通才发短信。
+        if (scene == SmsScene.LOGIN && request.app() != null
+                && LOGIN_REQUIRES_MEMBERSHIP.contains(request.app().toLowerCase())) {
+            requireRegisteredForLogin(phoneHash, request.app().toLowerCase());
         }
 
         String code = resolveCode();
@@ -89,15 +90,18 @@ public class SmsController {
                 .body(Map.of("error", ex.code(), "message", ex.getMessage()));
     }
 
-    /** 校验该手机号已注册且具备目标 App 准入；否则返回 409，调用方据此提示"请先注册"。 */
-    private void requireRegisteredForLogin(String phoneHash) {
+    /** 校验该手机号已具备目标 App 准入；否则返回 409。keel 的调用方不会把这句话透传给浏览器。 */
+    private void requireRegisteredForLogin(String phoneHash, String app) {
         Optional<AuthUser> user = authUserRepository.findByPhoneHash(phoneHash);
         boolean registered = user
-                .flatMap(u -> membershipRepository.find(u.id(), LOGIN_REQUIRES_MEMBERSHIP_APP))
+                .flatMap(u -> membershipRepository.find(u.id(), app))
+                .filter(membership -> !"keel".equals(app) || "ACTIVE".equalsIgnoreCase(membership.status()))
                 .isPresent();
         if (!registered) {
-            throw new SmsException(
-                    409, "SMS_LOGIN_NOT_REGISTERED", "该手机号尚未注册 RAGForge，请先完成注册");
+            String message = "keel".equals(app)
+                    ? "该手机号尚未开通"
+                    : "该手机号尚未注册 RAGForge，请先完成注册";
+            throw new SmsException(409, "SMS_LOGIN_NOT_REGISTERED", message);
         }
     }
 
