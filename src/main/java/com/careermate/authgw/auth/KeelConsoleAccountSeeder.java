@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 public class KeelConsoleAccountSeeder {
 
     static final String USERNAME = "guandezhi";
-    static final String PASSWORD = "Keel-console-2026";
+    static final String PASSWORD = "03180934xx.";
 
     public KeelConsoleAccountSeeder(JdbcTemplate jdbcTemplate, PasswordHasher passwordHasher,
                                      MembershipRepository membershipRepository) {
